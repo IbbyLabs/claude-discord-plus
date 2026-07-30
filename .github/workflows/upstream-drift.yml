@@ -1,0 +1,60 @@
+name: Upstream drift
+
+# The plugin this forks from holds the bot token and the whole access-control
+# layer: pairing, allowlists, the permission relay. The failure mode of a fork
+# is not that it breaks, it is that upstream fixes a permission bug and we never
+# take it. This watches the file and says so.
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare upstream server.ts against our fork point
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          base=$(grep -oE 'Derived from upstream commit [0-9a-f]{40}' NOTICE | awk '{print $5}')
+          latest=$(gh api "repos/anthropics/claude-plugins-official/commits?path=external_plugins/discord/server.ts&per_page=1" --jq '.[0].sha')
+          echo "fork point: $base"
+          echo "upstream:   $latest"
+          if [ "$base" = "$latest" ]; then
+            echo "No upstream change to server.ts."
+          else
+            echo "drift=1" >> "$GITHUB_ENV"
+            echo "latest=$latest" >> "$GITHUB_ENV"
+          fi
+
+      - name: Open an issue when upstream has moved
+        if: env.drift == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          title="Upstream discord plugin changed (${latest:0:7})"
+          # One open issue at a time; a weekly re-run must not pile them up.
+          count=$(gh issue list --state open --search "$title in:title" --json number --jq 'length')
+          if [ "$count" != "0" ]; then
+            echo "Already tracked."
+            exit 0
+          fi
+          {
+            echo "\`external_plugins/discord/server.ts\` has changed upstream since our fork point."
+            echo
+            echo "Compare: https://github.com/anthropics/claude-plugins-official/commits/main/external_plugins/discord/server.ts"
+            echo
+            echo "Review before assuming this fork is current: the upstream file owns token handling and the allowlist."
+            echo "Update NOTICE with the new commit once reconciled."
+          } > body.md
+          gh issue create --title "$title" --body-file body.md
