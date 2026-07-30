@@ -47,6 +47,12 @@ instead of a bare `+2att`.
 are the statuses, so this is a control surface rather than decoration — the bot
 watching the forum turns a tag change into a status change.
 
+Discord rejects edits to an archived thread, which is most of a tracker's
+history, so `set_thread_tags` reopens one and applies the tags, saying in the
+reply that it did. It stays open: a bot reacting to the tag edits the thread, and
+re-archiving immediately beats it to the post. A forum with no tags defined says
+so rather than reporting the tag you asked for as unknown.
+
 Forum channels are not text-based, so `fetch_messages` cannot read a forum
 itself; read its threads instead. The tag tools resolve the forum from either the
 channel or a thread inside it, and check the same allowlist.

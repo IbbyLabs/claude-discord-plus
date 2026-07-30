@@ -18,6 +18,7 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     message text and an attachment count alone.
   - Added delete_message and pin_message.
   - Added list_forum_tags and set_thread_tags, so a forum thread's tags can be
-    read and set by name.
+    read and set by name. set_thread_tags reopens an archived thread to apply
+    them and leaves it open.
 
 Upstream carries no NOTICE file; this one exists to record the above.

@@ -854,6 +854,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         if (!Array.isArray(available)) throw new Error('that thread is not in a forum')
 
         const wanted = (args.tags as string[]) ?? []
+        if (wanted.length > 0 && available.length === 0) {
+          throw new Error(
+            `#${(forum as any)?.name ?? 'this forum'} has no tags defined, so there is nothing to apply`,
+          )
+        }
         // Names are what a caller actually has to hand; ids are accepted so a
         // list_forum_tags result can be passed straight back.
         const ids: string[] = []
@@ -870,12 +875,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         if (ids.length > 5) throw new Error('Discord allows at most 5 tags on a thread')
 
+        // Discord rejects edits to an archived thread, and triage mostly targets
+        // old threads. Leave it open afterwards: a tracker bot reacting to the
+        // tag edits the thread, and re-archiving here beats it to the post.
+        const wasArchived = Boolean(ch.archived)
+        if (wasArchived) await ch.setArchived(false)
         await ch.setAppliedTags(ids)
+        const base = ids.length === 0 ? 'tags cleared' : `tags set: ${wanted.join(', ')}`
         return {
           content: [
             {
               type: 'text',
-              text: ids.length === 0 ? 'tags cleared' : `tags set: ${wanted.join(', ')}`,
+              text: wasArchived ? `${base} (thread was archived; reopened)` : base,
             },
           ],
         }
