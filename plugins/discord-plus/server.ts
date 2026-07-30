@@ -659,6 +659,21 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
  * attachments actually are. A bare count meant the only way to find out was to
  * download them.
  */
+/** Collapse an embed to one line. Bots put the whole message here and leave
+ *  content empty, so a reader that skips embeds sees nothing at all. */
+function flattenEmbeds(embeds: readonly any[]): string {
+  const flat = (v: string) => v.replace(/[\r\n]+/g, ' ⏎ ')
+  const rendered = (embeds ?? [])
+    .map(e => {
+      const bits = [e?.title, e?.description].filter((v: unknown): v is string => !!v).map(flat)
+      for (const f of e?.fields ?? []) bits.push(`${flat(f.name)}: ${flat(f.value)}`)
+      if (e?.footer?.text) bits.push(flat(e.footer.text))
+      return bits.join(' · ')
+    })
+    .filter(v => v.length > 0)
+  return rendered.join(' || ')
+}
+
 function formatMessageLine(m: Message): string {
   const who = m.author.id === client.user?.id ? 'me' : m.author.username
   const parts: string[] = [`id: ${m.id}`]
@@ -682,22 +697,8 @@ function formatMessageLine(m: Message): string {
   // empty, so reading content alone renders the most informative messages as
   // blank lines. Flattened rather than pretty-printed to keep one row per
   // message.
-  if (m.embeds.length > 0) {
-    const rendered = m.embeds
-      .map(e => {
-        const bits = [e.title, e.description]
-          .filter((v): v is string => !!v)
-          .map(flat)
-        for (const f of e.fields ?? []) bits.push(`${flat(f.name)}: ${flat(f.value)}`)
-        if (e.footer?.text) bits.push(flat(e.footer.text))
-        return bits.join(' · ')
-      })
-      .filter(v => v.length > 0)
-    if (rendered.length > 0) {
-      const joined = rendered.join(' || ')
-      text = text ? `${text} [embed: ${joined}]` : `[embed: ${joined}]`
-    }
-  }
+  const embedText = flattenEmbeds(m.embeds)
+  if (embedText) text = text ? `${text} [embed: ${embedText}]` : `[embed: ${embedText}]`
 
   return `[${m.createdAt.toISOString()}] ${who}: ${text}  (${parts.join(' | ')})`
 }
@@ -837,7 +838,11 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const text = hits
           .map(m => {
             const author = (m.author ?? {}) as { username?: string }
-            const body = String(m.content ?? '').replace(/[\r\n]+/g, ' ⏎ ')
+            let body = String(m.content ?? '').replace(/[\r\n]+/g, ' ⏎ ')
+            // Same reason as fetch_messages: a hit whose text lives in an embed
+            // would otherwise come back as an empty line.
+            const embedded = flattenEmbeds((m.embeds as any[]) ?? [])
+            if (embedded) body = body ? `${body} [embed: ${embedded}]` : `[embed: ${embedded}]`
             return `[${m.timestamp}] #${m.channel_id} ${author.username ?? '?'}: ${body}  (id: ${m.id})`
           })
           .join('\n')
