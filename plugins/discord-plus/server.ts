@@ -623,6 +623,33 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'list_forum_tags',
+      description:
+        "List a forum channel's available tags with their ids, so set_thread_tags can be called by name or id. Pass the forum channel, or a thread inside it.",
+      inputSchema: {
+        type: 'object',
+        properties: { channel: { type: 'string' } },
+        required: ['channel'],
+      },
+    },
+    {
+      name: 'set_thread_tags',
+      description:
+        "Set the tags on a forum thread, replacing what is there. Accepts tag names or ids. Needs MANAGE_THREADS for tags the forum marks moderated. Discord allows at most 5 tags on a thread.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          chat_id: { type: 'string', description: 'The thread to tag.' },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Tag names or ids. An empty array clears them.',
+          },
+        },
+        required: ['chat_id', 'tags'],
+      },
+    },
+    {
       name: 'search_messages',
       description:
         "Search a guild's messages. Pass any channel in the guild to scope the search; results are filtered to allowlisted channels only. Needs the MESSAGE_CONTENT intent. Returns up to 25 per page.",
@@ -786,6 +813,53 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         if (pin) await msg.pin()
         else await msg.unpin()
         return { content: [{ type: 'text', text: pin ? 'pinned' : 'unpinned' }] }
+      }
+      case 'list_forum_tags': {
+        const ch = await fetchAllowedChannel(args.channel as string)
+        const forum = ch.isThread() ? await ch.parent?.fetch() : ch
+        const tags = (forum as any)?.availableTags
+        if (!Array.isArray(tags)) {
+          throw new Error('that channel is not a forum, so it has no tags')
+        }
+        if (tags.length === 0) return { content: [{ type: 'text', text: '(forum has no tags)' }] }
+        const text = tags
+          .map((t: any) => `${t.name}  (id: ${t.id}${t.moderated ? ', moderated' : ''})`)
+          .join('\n')
+        return { content: [{ type: 'text', text }] }
+      }
+      case 'set_thread_tags': {
+        const ch = await fetchAllowedChannel(args.chat_id as string)
+        if (!ch.isThread()) throw new Error('set_thread_tags needs a forum thread')
+        const forum = await ch.parent?.fetch()
+        const available = (forum as any)?.availableTags
+        if (!Array.isArray(available)) throw new Error('that thread is not in a forum')
+
+        const wanted = (args.tags as string[]) ?? []
+        // Names are what a caller actually has to hand; ids are accepted so a
+        // list_forum_tags result can be passed straight back.
+        const ids: string[] = []
+        for (const want of wanted) {
+          const hit = available.find(
+            (t: any) => t.id === want || t.name.toLowerCase() === String(want).toLowerCase(),
+          )
+          if (!hit) {
+            throw new Error(
+              `no tag "${want}" on this forum. Available: ${available.map((t: any) => t.name).join(', ')}`,
+            )
+          }
+          ids.push(hit.id)
+        }
+        if (ids.length > 5) throw new Error('Discord allows at most 5 tags on a thread')
+
+        await ch.setAppliedTags(ids)
+        return {
+          content: [
+            {
+              type: 'text',
+              text: ids.length === 0 ? 'tags cleared' : `tags set: ${wanted.join(', ')}`,
+            },
+          ],
+        }
       }
       case 'search_messages': {
         const ch = await fetchAllowedChannel(args.channel as string)
