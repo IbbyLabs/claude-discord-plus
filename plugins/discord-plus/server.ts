@@ -653,6 +653,27 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'ensure_forum_tags',
+      description:
+        "Add tags to a forum that it does not already have, leaving existing tags untouched. Names are matched case-insensitively, so calling it twice changes nothing. Discord allows 20 tags per forum and this needs MANAGE_CHANNELS.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          channel: { type: 'string' },
+          tags: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Tag names to ensure exist.',
+          },
+          moderated: {
+            type: 'boolean',
+            description: 'true to restrict the new tags to MANAGE_THREADS holders (default false).',
+          },
+        },
+        required: ['channel', 'tags'],
+      },
+    },
+    {
       name: 'set_thread_tags',
       description:
         "Set the tags on a forum thread, replacing what is there. Accepts tag names or ids. Needs MANAGE_THREADS for tags the forum marks moderated. Discord allows at most 5 tags on a thread.",
@@ -845,6 +866,38 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           .map((t: any) => `${t.name}  (id: ${t.id}${t.moderated ? ', moderated' : ''})`)
           .join('\n')
         return { content: [{ type: 'text', text }] }
+      }
+      case 'ensure_forum_tags': {
+        const forum = await fetchAllowedForum(args.channel as string)
+        const existing = ((forum as any).availableTags ?? []) as Array<{ name: string }>
+        const wanted = (args.tags as string[]) ?? []
+        const have = new Set(existing.map(t => t.name.toLowerCase()))
+        const missing = wanted
+          .map(t => String(t).trim())
+          .filter(t => t.length > 0)
+          .filter((t, i, all) => all.findIndex(o => o.toLowerCase() === t.toLowerCase()) === i)
+          .filter(t => !have.has(t.toLowerCase()))
+        if (missing.length === 0) {
+          return {
+            content: [{ type: 'text', text: `no change; #${(forum as any).name} already has all ${wanted.length} tag(s)` }],
+          }
+        }
+        if (existing.length + missing.length > 20) {
+          throw new Error(
+            `Discord allows 20 tags per forum; #${(forum as any).name} has ${existing.length} and adding ${missing.length} would exceed it`,
+          )
+        }
+        // setAvailableTags replaces the whole list, so the existing tags are
+        // sent back with it. Dropping them here would delete them and strip
+        // every thread that carries one.
+        const moderated = Boolean(args.moderated)
+        await (forum as any).setAvailableTags([
+          ...existing,
+          ...missing.map(name => ({ name, moderated })),
+        ])
+        return {
+          content: [{ type: 'text', text: `added to #${(forum as any).name}: ${missing.join(', ')}` }],
+        }
       }
       case 'set_thread_tags': {
         const ch = await fetchAllowedChannel(args.chat_id as string)

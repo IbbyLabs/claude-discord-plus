@@ -47,6 +47,11 @@ instead of a bare `+2att`.
 are the statuses, so this is a control surface rather than decoration — the bot
 watching the forum turns a tag change into a status change.
 
+`ensure_forum_tags` adds tags a forum does not have yet. Discord replaces the
+whole tag list on write, so it sends the existing tags back with the new ones —
+a forum's tags carry threads, and dropping one strips every thread using it.
+Names match case-insensitively, so running it twice is a no-op.
+
 Discord rejects edits to an archived thread, which is most of a tracker's
 history, so `set_thread_tags` reopens one and applies the tags, saying in the
 reply that it did. It stays open: a bot reacting to the tag edits the thread, and
