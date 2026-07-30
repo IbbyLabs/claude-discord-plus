@@ -20,6 +20,12 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
   - Added list_forum_tags and set_thread_tags, so a forum thread's tags can be
     read and set by name. set_thread_tags reopens an archived thread to apply
     them and leaves it open.
+  - Added list_forum_threads, listing a forum's posts with their status tags.
+    Upstream can only see a post it was sent a message from.
+  - fetch_messages pages past the 100-per-request cap Discord enforces, and
+    takes a before cursor.
+  - The inbound envelope carries the thread name and parent id. A tracker keeps
+    its report id in the post title and nowhere else in the payload.
   - Writes a gateway state file (status, ping, last inbound event) so a
     supervisor can tell a deaf connection from a quiet channel without opening
     a second gateway.

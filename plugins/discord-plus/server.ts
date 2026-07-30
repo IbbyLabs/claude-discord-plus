@@ -610,7 +610,11 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           channel: { type: 'string' },
           limit: {
             type: 'number',
-            description: 'Max messages (default 20, Discord caps at 100).',
+            description: 'Max messages (default 20). Pages past the 100-per-request cap Discord enforces, up to 1000.',
+          },
+          before: {
+            type: 'string',
+            description: 'Message id to read backwards from, to continue past an earlier call.',
           },
         },
         required: ['channel'],
@@ -649,6 +653,26 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: 'object',
         properties: { channel: { type: 'string' } },
+        required: ['channel'],
+      },
+    },
+    {
+      name: 'list_forum_threads',
+      description:
+        "List a forum's posts with their status tags, without needing a message from each one. Covers active and archived threads. This is the only way to see a post nobody has sent you.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          channel: { type: 'string' },
+          include_archived: {
+            type: 'boolean',
+            description: 'Include archived posts (default true). Most of a tracker is archived.',
+          },
+          limit: {
+            type: 'number',
+            description: 'Max threads to return (default 50, max 200).',
+          },
+        },
         required: ['channel'],
       },
     },
@@ -829,9 +853,24 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
       }
       case 'fetch_messages': {
         const ch = await fetchAllowedChannel(args.channel as string)
-        const limit = Math.min((args.limit as number) ?? 20, 100)
-        const msgs = await ch.messages.fetch({ limit })
-        const arr = [...msgs.values()].reverse()
+        // Discord caps a single fetch at 100 regardless of what is asked, so a
+        // longer thread is read by walking back from the oldest id returned.
+        const want = Math.min(Math.max((args.limit as number) ?? 20, 1), 1000)
+        const before0 = args.before as string | undefined
+        const collected: Message[] = []
+        let cursor = before0
+        while (collected.length < want) {
+          const page = await ch.messages.fetch({
+            limit: Math.min(100, want - collected.length),
+            ...(cursor ? { before: cursor } : {}),
+          })
+          if (page.size === 0) break
+          const ordered = [...page.values()]
+          collected.push(...ordered)
+          cursor = ordered[ordered.length - 1]?.id
+          if (page.size < 100) break
+        }
+        const arr = collected.reverse()
         // A thread's name carries meaning the messages do not: bug trackers put
         // the report id there and nowhere else, so it is worth one header line.
         const header = ch.isThread() ? `(thread: ${JSON.stringify(ch.name)})\n` : ''
@@ -864,6 +903,54 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         if (tags.length === 0) return { content: [{ type: 'text', text: '(forum has no tags)' }] }
         const text = tags
           .map((t: any) => `${t.name}  (id: ${t.id}${t.moderated ? ', moderated' : ''})`)
+          .join('\n')
+        return { content: [{ type: 'text', text }] }
+      }
+      case 'list_forum_threads': {
+        const forum = await fetchAllowedForum(args.channel as string)
+        const tagNames = new Map<string, string>()
+        for (const t of ((forum as any).availableTags ?? []) as Array<{ id: string; name: string }>) {
+          tagNames.set(t.id, t.name)
+        }
+        const want = Math.min(Math.max((args.limit as number) ?? 50, 1), 200)
+        const includeArchived = args.include_archived === undefined ? true : Boolean(args.include_archived)
+
+        type Row = { name: string; id: string; tags: string[]; archived: boolean; msgs: number }
+        const rows: Row[] = []
+        const add = (t: any, archived: boolean) => {
+          rows.push({
+            name: String(t.name ?? ''),
+            id: String(t.id),
+            tags: ((t.appliedTags ?? []) as string[]).map(id => tagNames.get(id) ?? id),
+            archived,
+            msgs: Number(t.messageCount ?? 0),
+          })
+        }
+
+        const active = await (forum as any).threads.fetchActive()
+        for (const t of active.threads.values()) add(t, false)
+
+        // Most of a tracker is archived, and Discord pages these 100 at a time.
+        if (includeArchived) {
+          let before: string | undefined
+          while (rows.length < want) {
+            const page = await (forum as any).threads.fetchArchived({ limit: 100, ...(before ? { before } : {}) })
+            if (page.threads.size === 0) break
+            let last: any
+            for (const t of page.threads.values()) {
+              add(t, true)
+              last = t
+            }
+            if (!page.hasMore) break
+            before = last?.archivedAt?.toISOString?.() ?? last?.id
+            if (!before) break
+          }
+        }
+
+        if (rows.length === 0) return { content: [{ type: 'text', text: '(no threads)' }] }
+        const text = rows
+          .slice(0, want)
+          .map(r => `${r.name}  (id: ${r.id}${r.tags.length ? ', tags: ' + r.tags.join('/') : ''}${r.archived ? ', archived' : ''}, ${r.msgs} msgs)`)
           .join('\n')
         return { content: [{ type: 'text', text }] }
       }
@@ -1214,6 +1301,13 @@ async function handleInbound(msg: Message): Promise<void> {
         user: msg.author.username,
         user_id: msg.author.id,
         ts: msg.createdAt.toISOString(),
+        // A forum post's title is where a tracker keeps its id (BUG-171,
+        // FR-126). It appears nowhere else in the payload, so without it the id
+        // that closes a report cannot be read from an inbound message at all.
+        ...(msg.channel.isThread() && msg.channel.name
+          ? { thread_name: msg.channel.name, parent_id: msg.channel.parentId ?? '' }
+          : {}),
+        ...(msg.author.bot ? { author_is_bot: 'true' } : {}),
         ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
       },
     },

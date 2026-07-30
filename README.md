@@ -42,6 +42,21 @@ instead of a bare `+2att`.
 
 **`delete_message` and `pin_message`.** Housekeeping the bot could not do.
 
+**`list_forum_threads`.** Lists a forum's posts with their id, status tags,
+archived state and message count, covering active and archived threads. Upstream
+can only see a post it was sent a message from, so everything nobody wrote in was
+invisible — which is most of a tracker. This is what makes triage possible from
+the outside rather than waiting to be told.
+
+**`fetch_messages` pages.** Discord caps a single request at 100 and rejects
+anything higher, so a longer thread is read by walking back from the oldest id
+returned. `limit` goes to 1000, and `before` continues from an earlier call.
+
+**Thread name in the envelope.** An inbound message now carries `thread_name` and
+`parent_id`. Trackers keep the report id in the post title (`BUG-171`,
+`FR-126`) and nowhere else in the payload, so without it the id that closes a
+report cannot be read from the message at all.
+
 **Gateway state file.** A live socket is not a live gateway: the connection can
 stay open while nothing is delivered, which looks exactly like a quiet channel.
 The server writes `gateway.state` next to `access.json` every 20 seconds with the
