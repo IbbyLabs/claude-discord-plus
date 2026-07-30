@@ -9,5 +9,13 @@
     "mcp",
     "messaging",
     "search"
-  ]
+  ],
+  "author": {
+    "name": "IbbyLabs",
+    "email": "ibby@ibbylabs.dev",
+    "url": "https://ibbylabs.dev"
+  },
+  "homepage": "https://github.com/IbbyLabs/claude-discord-plus",
+  "repository": "https://github.com/IbbyLabs/claude-discord-plus",
+  "license": "Apache-2.0"
 }
