@@ -42,6 +42,15 @@ instead of a bare `+2att`.
 
 **`delete_message` and `pin_message`.** Housekeeping the bot could not do.
 
+**Forum tags.** `list_forum_tags` reads a forum's tags with their ids;
+`set_thread_tags` sets a thread's tags by name or id. On a tracker forum the tags
+are the statuses, so this is a control surface rather than decoration — the bot
+watching the forum turns a tag change into a status change.
+
+Forum channels are not text-based, so `fetch_messages` cannot read a forum
+itself; read its threads instead. The tag tools resolve the forum from either the
+channel or a thread inside it, and check the same allowlist.
+
 ## Relationship to upstream
 
 Forked from `cf99fc252a44e3f36763abe1db8744757f1b0297`, plugin version 0.0.4. Modifications are listed in

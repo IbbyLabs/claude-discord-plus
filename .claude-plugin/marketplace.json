@@ -9,7 +9,7 @@
   "plugins": [
     {
       "name": "discord-plus",
-      "description": "Discord messaging bridge with access control, plus message search, embed and thread context, attachment detail, delete and pin. Derivative of the official discord plugin.",
+      "description": "Discord messaging bridge with access control, plus message search, embed and thread context, attachment detail, forum tag control, delete and pin. Derivative of the official discord plugin.",
       "category": "productivity",
       "source": "./plugins/discord-plus"
     }
