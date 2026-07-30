@@ -392,6 +392,26 @@ function chunk(text: string, limit: number, mode: 'length' | 'newline'): string[
   return out
 }
 
+/**
+ * Resolve a forum channel, given the forum itself or a thread inside it, and
+ * check it against the same allowlist as everything else. fetchAllowedChannel
+ * cannot be used directly: a forum holds no messages, so it fails the
+ * text-based guard — while being the only place tags exist.
+ */
+async function fetchAllowedForum(id: string) {
+  const ch = await client.channels.fetch(id)
+  if (!ch) throw new Error(`channel ${id} not found`)
+  const forum = ch.isThread() ? await ch.parent?.fetch() : ch
+  if (!forum || !('availableTags' in forum)) {
+    throw new Error(`channel ${id} is not a forum, so it has no tags`)
+  }
+  const access = loadAccess()
+  if (!(forum.id in access.groups)) {
+    throw new Error(`channel ${forum.id} is not allowlisted — add via /discord:access`)
+  }
+  return forum
+}
+
 async function fetchTextChannel(id: string) {
   const ch = await client.channels.fetch(id)
   if (!ch || !ch.isTextBased()) {
@@ -815,8 +835,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text: pin ? 'pinned' : 'unpinned' }] }
       }
       case 'list_forum_tags': {
-        const ch = await fetchAllowedChannel(args.channel as string)
-        const forum = ch.isThread() ? await ch.parent?.fetch() : ch
+        const forum = await fetchAllowedForum(args.channel as string)
         const tags = (forum as any)?.availableTags
         if (!Array.isArray(tags)) {
           throw new Error('that channel is not a forum, so it has no tags')
