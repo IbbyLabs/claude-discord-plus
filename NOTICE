@@ -20,6 +20,9 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
   - Added list_forum_tags and set_thread_tags, so a forum thread's tags can be
     read and set by name. set_thread_tags reopens an archived thread to apply
     them and leaves it open.
+  - Writes a gateway state file (status, ping, last inbound event) so a
+    supervisor can tell a deaf connection from a quiet channel without opening
+    a second gateway.
   - Messages from other apps and webhooks are delivered rather than dropped;
     only this bot's own messages are skipped. Release and issue activity
     arrives by webhook, and upstream ignored all of it.

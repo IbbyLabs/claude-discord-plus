@@ -1,7 +1,7 @@
 {
   "name": "discord-plus",
   "description": "Discord channel for Claude Code with access control, extended: message search, embed and thread context, attachment detail, forum tags, delete and pin.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "keywords": [
     "channel",
     "discord",

@@ -1222,9 +1222,52 @@ async function handleInbound(msg: Message): Promise<void> {
   })
 }
 
+// A live TCP socket is not the same as a live gateway: a connection can stay
+// open while the session receives nothing, which looks identical to a quiet
+// channel. This records what only the client knows — whether the websocket is
+// READY and when it last actually heard from Discord — so a supervisor can tell
+// deaf from idle without opening a second connection of its own.
+const GATEWAY_STATE_FILE = join(STATE_DIR, 'gateway.state')
+let lastEventAt = Date.now()
+
+function writeGatewayState(): void {
+  try {
+    mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
+    writeFileSync(
+      GATEWAY_STATE_FILE,
+      JSON.stringify({
+        status: client.ws.status,
+        ready: client.isReady(),
+        pingMs: Math.round(client.ws.ping),
+        lastEventAt,
+        writtenAt: Date.now(),
+        user: client.user?.tag ?? null,
+      }) + '\n',
+      { mode: 0o600 },
+    )
+  } catch {}
+}
+
+// Any inbound gateway traffic counts, not only messages, so a channel nobody is
+// posting in does not read as a failure.
+client.on('raw', () => {
+  lastEventAt = Date.now()
+})
+
 client.once('ready', c => {
   process.stderr.write(`discord channel: gateway connected as ${c.user.tag}\n`)
+  lastEventAt = Date.now()
+  writeGatewayState()
 })
+
+client.on('shardDisconnect', () => writeGatewayState())
+client.on('shardReconnecting', () => writeGatewayState())
+client.on('shardResume', () => {
+  lastEventAt = Date.now()
+  writeGatewayState()
+})
+
+setInterval(writeGatewayState, 20_000).unref?.()
 
 client.login(TOKEN).catch(err => {
   process.stderr.write(`discord channel: login failed: ${err}\n`)

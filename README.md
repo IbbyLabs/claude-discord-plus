@@ -42,6 +42,12 @@ instead of a bare `+2att`.
 
 **`delete_message` and `pin_message`.** Housekeeping the bot could not do.
 
+**Gateway state file.** A live socket is not a live gateway: the connection can
+stay open while nothing is delivered, which looks exactly like a quiet channel.
+The server writes `gateway.state` next to `access.json` every 20 seconds with the
+websocket status, ping and the time it last heard anything from Discord, so a
+watchdog can check whether it is actually receiving rather than merely connected.
+
 **Bot and webhook messages are delivered.** Upstream drops every message whose
 author is a bot, which hides the channels that report what shipped — releases,
 issues and commits all arrive by webhook. Only the bot's own messages are
