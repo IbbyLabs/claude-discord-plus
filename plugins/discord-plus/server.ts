@@ -1131,7 +1131,11 @@ client.on('interactionCreate', async (interaction: Interaction) => {
 })
 
 client.on('messageCreate', msg => {
-  if (msg.author.bot) return
+  // Only this bot's own messages are skipped, to avoid answering itself. Other
+  // apps and webhooks are content: release, issue and commit activity arrives
+  // that way, and dropping it left the session blind to the channels that
+  // report what shipped.
+  if (msg.author.id === client.user?.id) return
   handleInbound(msg).catch(e => process.stderr.write(`discord: handleInbound failed: ${e}\n`))
 })
 

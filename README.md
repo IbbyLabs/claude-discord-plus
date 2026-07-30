@@ -42,6 +42,11 @@ instead of a bare `+2att`.
 
 **`delete_message` and `pin_message`.** Housekeeping the bot could not do.
 
+**Bot and webhook messages are delivered.** Upstream drops every message whose
+author is a bot, which hides the channels that report what shipped — releases,
+issues and commits all arrive by webhook. Only the bot's own messages are
+skipped, so it cannot answer itself.
+
 **Forum tags.** `list_forum_tags` reads a forum's tags with their ids;
 `set_thread_tags` sets a thread's tags by name or id. On a tracker forum the tags
 are the statuses, so this is a control surface rather than decoration — the bot
