@@ -1647,6 +1647,10 @@ async function relayEdit(
   // With no cached before there is nothing to compare; editedTimestamp is set
   // only by a real edit.
   if (before === null && !fresh.editedTimestamp) return
+  // An embed-only message carries no content, so an uncached edit of one says
+  // nothing a reader could act on. Dashboards that refresh their own embed on a
+  // timer would otherwise wake the session for every tick.
+  if (before === null && !fresh.content) return
   if (!ambientChannelAllowed(fresh.channelId)) return
 
   const who = fresh.author?.username ?? '?'
