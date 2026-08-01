@@ -76,4 +76,35 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     deferred immediately and the outcome is sent as an ordinary channel message,
     since a session outlives the fifteen-minute interaction token.
 
+  - Added describe_server, reporting a guild's channels and categories with their
+    ids and types, its roles with position and colour, its custom emoji and its
+    member count. Nothing here could report what channels exist, so a channel
+    nobody had sent a message from was unreachable. The answer is cached for a
+    few minutes, since channel and role lists change rarely.
+  - reply takes a poll parameter, attaching a native Discord poll: a question,
+    2 to 10 answers, a duration in hours and a multiselect flag. Counts, lengths
+    and duration are checked before the send, so a bad poll says what is wrong
+    rather than returning a Discord 400.
+  - fetch_messages accepts a message link (https://discord.com/channels/…)
+    wherever it takes a channel, returning the linked message with the
+    conversation either side of it. A link resolves to ids and then goes through
+    the same allowlist check as a channel id, so pasting one cannot reach a
+    channel that reading would refuse.
+  - The typing indicator is held for the length of a turn rather than the ten
+    seconds a single sendTyping lasts. It starts on the inbound path, re-sends on
+    a timer and stops when the reply goes out. There is one timer per channel,
+    each carries an absolute deadline that ends it, and a failing pulse clears
+    it.
+  - Added remind, scheduling a message the bridge posts to a channel later, with
+    list and cancel. Discord has no reminder API: the store is reminders.json
+    next to access.json, a due time is read from a relative form ("in 2 hours"),
+    a day and time ("friday 9am") or an absolute timestamp, and a minute tick
+    posts what is due. A corrupt store is moved aside on read rather than
+    stopping the process, and a due time that passed while the bridge was down
+    fires on reconnect.
+  - Text a Discord user reads names the bot by its own display name rather than
+    naming Claude, since the same code runs under whatever name the application
+    was given. The pairing instruction keeps the product name, because it names
+    the program the operator has to open.
+
 Upstream carries no NOTICE file; this one exists to record the above.

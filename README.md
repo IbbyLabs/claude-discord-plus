@@ -17,6 +17,26 @@ Set up access exactly as upstream: `/discord:access`. See [ACCESS.md](plugins/di
 
 ## What it adds
 
+**`describe_server`.** Every channel and category with its id and type, every
+role with its id, position and colour, the custom emoji `react` can use, the
+member count and the guild name — in one call:
+
+```
+IbbyLabs  (guild id: 1339…, 412 members)
+channels (23):
+#general  (id: 1339…, text, in: Community)
+#bugs  (id: 1382…, forum, in: Support)
+roles (6):
+@Maintainer  (id: 1341…, pos: 4, #5865f2)
+emoji: <:xrdb:1355…> <a:shipit:1361…>
+```
+
+The bridge could read every message in a channel and could not say what channels
+existed, so posting anywhere nobody had written from meant asking a human for the
+id. Pass any allowlisted channel in the guild. The answer is cached for a few
+minutes — channel and role lists change rarely, and this is meant to be cheap
+enough to call before guessing.
+
 **Embed content.** Bots and webhooks put the whole message in an embed and leave
 `content` empty, so upstream renders the most informative messages as blank
 lines. Title, description, fields and footer are now included:
@@ -252,6 +272,82 @@ permitted exactly what was named — `everyone` and `here` both map to the
 `everyone` parse, and a role is passed by id in the `roles` list. `parse` never
 carries `roles`, which would permit every role named anywhere in the text. The
 opt-in is the parameter; message content cannot reach it.
+
+**Polls.** `reply` takes a `poll`, sending a native Discord poll under the text:
+
+```json
+{
+  "chat_id": "…",
+  "text": "Which one ships first?",
+  "poll": {
+    "question": "Which one ships first?",
+    "answers": ["Folder writing", "Community themes"],
+    "duration": 48,
+    "allow_multiselect": false
+  }
+}
+```
+
+Two to ten answers, `duration` in hours (24 by default, 768 at most), and
+`allow_multiselect` for voters picking several. Counts, lengths and duration are
+checked here, so a poll that Discord would reject with a 400 comes back saying
+which limit it broke. Apps cannot vote in their own polls, so this collects other
+people's answers and holds no opinion of its own.
+
+It rides on `reply` rather than being its own tool: a poll is a message with a
+question attached, and every tool's schema is paid for on every turn.
+
+**Message links.** People paste `https://discord.com/channels/…` constantly, and
+the bridge could do nothing with one. `fetch_messages` now takes a link anywhere
+it takes a channel:
+
+```
+fetch_messages(channel: "https://discord.com/channels/1339…/1382…/1401…")
+```
+
+A link naming a message returns that message with the conversation either side of
+it, the linked one marked `→`. A link naming only a channel reads it as an id.
+
+The link resolves to ids and then goes through the same allowlist check
+everything else does, so pasting one is a shorter way to write a channel id and
+not a way around what reading is allowed to reach.
+
+**Typing while it thinks.** A turn takes minutes and Discord holds a typing
+indicator for about ten seconds, so the channel used to sit silent from the
+moment a message arrived until the reply landed. The indicator now starts when a
+message is accepted and is re-sent until the reply goes out.
+
+There is no tool for it and it costs no tokens. One timer per channel and never a
+second — a further message refreshes the existing deadline rather than scheduling
+again. Every timer carries an absolute deadline that stops it, a failing send
+clears it, and shutdown clears them all, so the worst case is a channel that
+types for ten minutes and then stops itself.
+
+**Reminders.** Discord has no reminder feature, so `remind` is one: a due time, a
+channel and a note, posted when it comes due.
+
+```json
+{ "action": "create", "chat_id": "…", "when": "friday 9am", "note": "chase the release PR" }
+```
+
+`when` reads a relative form (`in 2 hours`, `90m`, `1h 30m`), a day and time
+(`tomorrow 9am`, `friday 17:00`), or an absolute timestamp, in the host's local
+zone. Anything it cannot read is rejected with the accepted forms rather than
+guessed at, because a misread reminder fires at the wrong time and says nothing.
+`action: "list"` reports what is scheduled with ids, `action: "cancel"` takes one.
+
+The store is `reminders.json` next to `access.json`, so reminders survive a
+restart, and a due time that passed while the bridge was down fires when it comes
+back. A corrupt store is moved aside on read and the process starts with none,
+rather than failing to boot. The tick runs once a minute; the target channel is
+checked against the allowlist both when the reminder is set and again when it
+fires, since the allowlist may have changed in between.
+
+**Bot messages use the bot's name.** Text a Discord user reads — the pairing
+confirmation, the answers to "Report as bug" — names the bot by its own display
+name rather than naming Claude, since this runs under whatever name the
+application was given. The pairing instruction is the exception and still says
+Claude Code, because it names the program the operator has to open.
 
 ## Relationship to upstream
 
