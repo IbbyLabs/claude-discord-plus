@@ -349,6 +349,13 @@ name rather than naming Claude, since this runs under whatever name the
 application was given. The pairing instruction is the exception and still says
 Claude Code, because it names the program the operator has to open.
 
+### Reply context
+
+An inbound reply carries the message it answers — author and an excerpt of the
+content — as `[replying to <who>: "..."]`, plus `reply_to_message_id` and
+`reply_to_user` in the meta. Discord sends only a reference id, so without this
+the session sees the reply and not what it replies to.
+
 ## Relationship to upstream
 
 Forked from `cf99fc252a44e3f36763abe1db8744757f1b0297`, plugin version 0.0.4. Modifications are listed in

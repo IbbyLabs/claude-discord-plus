@@ -2463,6 +2463,37 @@ client.on('messageCreate', msg => {
   handleInbound(msg).catch(e => process.stderr.write(`discord: handleInbound failed: ${e}\n`))
 })
 
+/**
+ * The message an inbound reply is answering, rendered for the envelope.
+ *
+ * Discord sends only a message id on `reference`, so without fetching it the
+ * session sees the reply and not what it replies to — someone quoting a bug
+ * report and asking "can you look at this" reads as a question about nothing.
+ * Falls back to the id alone when the original is gone or unreadable.
+ */
+async function replyContextFor(msg: Message): Promise<{ text: string; meta: Record<string, string> } | undefined> {
+  const refId = msg.reference?.messageId
+  if (!refId) return undefined
+  try {
+    const ref = await msg.fetchReference()
+    const body = String(ref.content ?? '').replace(/[\r\n]+/g, ' ⏎ ') || flattenEmbeds(ref.embeds ?? [])
+    const atts = [...ref.attachments.values()].map(safeAttName)
+    const shown = body || (atts.length > 0 ? `(${atts.join(', ')})` : '(no text)')
+    const who = ref.author?.id === client.user?.id ? 'you' : (ref.author?.username ?? 'someone')
+    return {
+      text: `[replying to ${who}: "${excerpt(shown)}"]`,
+      meta: {
+        reply_to_message_id: refId,
+        reply_to_user: ref.author?.username ?? '',
+        reply_to_user_id: ref.author?.id ?? '',
+      },
+    }
+  } catch (err) {
+    process.stderr.write(`discord channel: could not read the replied-to message ${refId}: ${err}\n`)
+    return { text: `[replying to message ${refId}, which could not be read]`, meta: { reply_to_message_id: refId } }
+  }
+}
+
 async function handleInbound(msg: Message): Promise<void> {
   const result = await gate(msg)
 
@@ -2550,7 +2581,11 @@ async function handleInbound(msg: Message): Promise<void> {
   // by any allowlisted sender typing that string.
   const embedText = flattenEmbeds(msg.embeds)
 
+  // What a reply answers is context for everything after it, so it leads.
+  const replyCtx = await replyContextFor(msg)
+
   const lines: string[] = []
+  if (replyCtx) lines.push(replyCtx.text)
   if (msg.content) lines.push(msg.content)
   if (embedText) lines.push(`[embed: ${embedText}]`)
   if (voiceNote) lines.push(voiceNote)
@@ -2575,6 +2610,7 @@ async function handleInbound(msg: Message): Promise<void> {
           : {}),
         // A DM reaches the session through a private channel with no witnesses,
         // so it is worth telling apart from something said in a channel.
+        ...(replyCtx ? replyCtx.meta : {}),
         ...(isDM ? { is_dm: 'true' } : {}),
         ...(msg.author.bot ? { author_is_bot: 'true' } : {}),
         ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
