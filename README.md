@@ -88,6 +88,62 @@ Forum channels are not text-based, so `fetch_messages` cannot read a forum
 itself; read its threads instead. The tag tools resolve the forum from either the
 channel or a thread inside it, and check the same allowlist.
 
+**Ambient events.** Upstream connects with the message intents alone, so a
+thumbs-up, a correction typed into an existing message, a deletion and everyone
+arriving or leaving are all invisible. These now arrive as one line each on the
+same notification channel as a message, with an `event` in the meta and a tag in
+the text:
+
+```
+[reaction+] alice reacted 👍 to 1399 (me: "shipped in v3.14.2")
+[edit] alice edited 1399: "port 8080" → "port 8081"
+[delete] alice's message 1399 deleted: "wrong channel, sorry"
+[member+] alice joined
+[member~] alice roles +Beta -Trial; nickname (none) → "Al"
+[voice~] alice moved General → Standup
+```
+
+Only content edits are relayed, because Discord fires the same event for embed
+resolution, link unfurls and pins. Voice reports joins, leaves and moves only,
+not mute, deafen or stream toggles. Reactions the bot adds itself are skipped, or
+the ack reaction would come straight back at it. Events relay from channels with
+an explicit `groups` entry, and member and voice events from any guild holding
+one.
+
+**`list_members`.** Members of a guild with their status, roles and nickname,
+filterable by `status` or `role`. Presence is deliberately pull-only: the
+`presenceUpdate` event fires on every status flicker of every member, which would
+bury the conversation, so the intent is enabled to populate the cache and the
+roster is read on demand instead.
+
+**`defaultPolicy`.** A channel with no `groups` entry used to drop everything,
+which meant the bot could be @mentioned anywhere it had been invited and answer
+nowhere. `defaultPolicy` is the policy those channels get, and defaults to
+`{"requireMention": true}`: a mention reaches the session from any channel the
+bot can see, while unlisted channels still do not deliver everything said in
+them. An explicit `groups` entry always wins. Set it to `null` for the older
+behaviour, where a channel is silent until it is listed.
+
+Reading follows delivery: the tools reach a channel the inbound gate would
+deliver from, so with a `defaultPolicy` set, `fetch_messages` and
+`search_messages` cover those channels too. `null` closes both again.
+
+**Open DMs, with a trace.** `dmPolicy` takes a fourth value, `guild`, which
+accepts a DM from anyone sharing a guild with the bot and drops the rest. A
+stranger's DM is otherwise dropped in silence, so a user who sends a config or an
+ID to the bot gets nothing back and nobody learns they tried.
+
+`dmMirrorChannelId` copies every accepted DM to a channel, since a DM is
+otherwise visible to nobody but the bot:
+
+```
+📥 DM from alice (184695080709324800): the render came out blank again
+```
+
+A failed mirror is logged and the message still goes through. Inbound DMs carry
+`is_dm` in the envelope so the session can hold a private message to a different
+standard than something said in front of a channel.
+
 ## Relationship to upstream
 
 Forked from `cf99fc252a44e3f36763abe1db8744757f1b0297`, plugin version 0.0.4. Modifications are listed in

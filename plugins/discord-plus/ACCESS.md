@@ -26,9 +26,16 @@ All state lives in `~/.claude/channels/discord/access.json`. The `/discord:acces
 | `pairing` (default) | Reply with a pairing code, drop the message. Approve with `/discord:access pair <code>`. |
 | `allowlist` | Drop silently. No reply. Use this once everyone who needs access is already on the list, or if pairing replies would attract spam. |
 | `disabled` | Drop everything, including allowlisted users and guild channels. |
+| `guild` | Accept a DM from anyone who shares a server with the bot; drop the rest. Membership is checked against the bot's guilds, so it needs the GUILD_MEMBERS intent. |
 
 ```
 /discord:access policy allowlist
+```
+
+**`dmMirrorChannelId`** copies every accepted DM to a channel, so a private message to the bot leaves a trace someone else can read. A failed mirror is logged and the message is still delivered. Unset means no mirroring.
+
+```
+/discord:access set dmMirrorChannelId 846209781206941736
 ```
 
 ## User IDs
@@ -57,6 +64,15 @@ With the default `requireMention: true`, the bot responds only when @mentioned o
 /discord:access group add 846209781206941736 --allow 184695080709324800,221773638772129792
 /discord:access group rm 846209781206941736
 ```
+
+**`defaultPolicy`** covers every channel with no `groups` entry of its own. Absent, it is `{"requireMention": true}`: an @mention reaches the bot from any channel it can see, and nothing else does. Set it to `null` for the stricter rule, where a channel stays silent until it is listed. An explicit `groups` entry always wins over it.
+
+```
+/discord:access set defaultPolicy '{"requireMention": true, "allowFrom": []}'
+/discord:access set defaultPolicy null
+```
+
+Reading follows delivery: the tools can read any channel the bot would accept a message from, so a non-null `defaultPolicy` widens `fetch_messages` and `search_messages` to those channels as well.
 
 ## Mention detection
 
@@ -98,10 +114,10 @@ Configure outbound behavior with `/discord:access set <key> <value>`.
 | `/discord:access deny a4f91c` | Discard a pending code. The sender is not notified. |
 | `/discord:access allow 184695080709324800` | Add a user snowflake directly. |
 | `/discord:access remove 184695080709324800` | Remove from the allowlist. |
-| `/discord:access policy allowlist` | Set `dmPolicy`. Values: `pairing`, `allowlist`, `disabled`. |
+| `/discord:access policy allowlist` | Set `dmPolicy`. Values: `pairing`, `allowlist`, `disabled`, `guild`. |
 | `/discord:access group add 846209781206941736` | Enable a guild channel. Flags: `--no-mention`, `--allow id1,id2`. |
 | `/discord:access group rm 846209781206941736` | Disable a guild channel. |
-| `/discord:access set ackReaction 🔨` | Set a config key: `ackReaction`, `replyToMode`, `textChunkLimit`, `chunkMode`, `mentionPatterns`. |
+| `/discord:access set ackReaction 🔨` | Set a config key: `ackReaction`, `replyToMode`, `textChunkLimit`, `chunkMode`, `mentionPatterns`, `defaultPolicy`, `dmMirrorChannelId`. |
 
 ## Config file
 
@@ -115,6 +131,9 @@ Configure outbound behavior with `/discord:access set <key> <value>`.
   // User snowflakes allowed to DM.
   "allowFrom": ["184695080709324800"],
 
+  // Copy every accepted DM to this channel. Omit for no mirroring.
+  "dmMirrorChannelId": "846209781206941736",
+
   // Guild channels the bot is active in. Empty object = DM-only.
   "groups": {
     "846209781206941736": {
@@ -124,6 +143,10 @@ Configure outbound behavior with `/discord:access set <key> <value>`.
       "allowFrom": []
     }
   },
+
+  // Policy for channels with no groups entry of their own.
+  // Omitted = { "requireMention": true }. null = drop unless listed.
+  "defaultPolicy": { "requireMention": true, "allowFrom": [] },
 
   // Case-insensitive regexes that count as a mention.
   "mentionPatterns": ["^hey claude\\b"],

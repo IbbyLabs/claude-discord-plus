@@ -37,6 +37,8 @@ Arguments passed: `$ARGUMENTS`
   "groups": {
     "<channelId>": { "requireMention": true, "allowFrom": [] }
   },
+  "defaultPolicy": { "requireMention": true, "allowFrom": [] },
+  "dmMirrorChannelId": "<channelId>",
   "pending": {
     "<6-char-code>": {
       "senderId": "...", "chatId": "...",
@@ -92,7 +94,8 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
 
 ### `policy <mode>`
 
-1. Validate `<mode>` is one of `pairing`, `allowlist`, `disabled`.
+1. Validate `<mode>` is one of `pairing`, `allowlist`, `disabled`, `guild`.
+   `guild` accepts a DM from anyone sharing a server with the bot.
 2. Read (create default if missing), set `dmPolicy`, write.
 
 ### `group add <channelId>` (optional: `--no-mention`, `--allow id1,id2`)
@@ -109,12 +112,17 @@ Parse `$ARGUMENTS` (space-separated). If empty or unrecognized, show status.
 ### `set <key> <value>`
 
 Delivery/UX config. Supported keys: `ackReaction`, `replyToMode`,
-`textChunkLimit`, `chunkMode`, `mentionPatterns`. Validate types:
+`textChunkLimit`, `chunkMode`, `mentionPatterns`, `defaultPolicy`,
+`dmMirrorChannelId`. Validate types:
 - `ackReaction`: string (emoji) or `""` to disable
 - `replyToMode`: `off` | `first` | `all`
 - `textChunkLimit`: number
 - `chunkMode`: `length` | `newline`
 - `mentionPatterns`: JSON array of regex strings
+- `defaultPolicy`: JSON object `{"requireMention": bool, "allowFrom": []}`, or
+  `null` to drop everything from channels with no `groups` entry. Omitting the
+  key entirely means `{"requireMention": true}`.
+- `dmMirrorChannelId`: channel snowflake, or `""` to stop mirroring DMs
 
 Read, set the key, write, confirm.
 
