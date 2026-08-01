@@ -2659,7 +2659,7 @@ async function replyContextFor(msg: Message): Promise<{ text: string; meta: Reco
     const shown = body || (atts.length > 0 ? `(${atts.join(', ')})` : '(no text)')
     const who = ref.author?.id === client.user?.id ? 'you' : (ref.author?.username ?? 'someone')
     return {
-      text: `[replying to ${who}: "${excerpt(shown)}"]`,
+      text: `[replying to ${who}: "${excerpt(shown, REPLY_EXCERPT_CHARS)}"]`,
       meta: {
         reply_to_message_id: refId,
         reply_to_user: ref.author?.username ?? '',
@@ -2837,10 +2837,14 @@ async function handleInbound(msg: Message): Promise<void> {
  */
 
 const EVENT_EXCERPT_CHARS = 90
+// A replied-to message is what the sender is answering, so it needs its whole
+// text, not the glanceable width an ambient event gets. Bounded so a very long
+// quoted message cannot bloat every inbound; the id is in meta for the rest.
+const REPLY_EXCERPT_CHARS = 1500
 
-function excerpt(text: string): string {
+function excerpt(text: string, limit = EVENT_EXCERPT_CHARS): string {
   const flat = text.replace(/[\r\n]+/g, ' ⏎ ').trim()
-  return flat.length > EVENT_EXCERPT_CHARS ? `${flat.slice(0, EVENT_EXCERPT_CHARS)}…` : flat
+  return flat.length > limit ? `${flat.slice(0, limit)}…` : flat
 }
 
 function messageExcerpt(m: Message | PartialMessage): string {
