@@ -117,6 +117,10 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     rather than its first line. When the quoted message is itself a reply, its
     own parent is surfaced one level further, so a nested reply is not read
     without the message it answers; resolution stops after that one extra hop.
+  - History lines from fetch_messages and search_messages name their sender as
+    "username (id)". A live message carries user_id in the envelope; upstream's
+    history formatters read author.id and then emitted the display name alone,
+    so nothing read back could be checked against a known user id.
   - Mentions are delivered as names rather than ids. Content carries the resolved
     form of a user, role or channel mention, and the ids travel in the envelope
     meta as mentioned_users, mentioned_roles and mentioned_channels, since a tool

@@ -1774,8 +1774,18 @@ function mentionMeta(msg: Message): Record<string, string> {
   }
 }
 
+// authorLabel names a sender as "username (id)". Used by every history
+// formatter so a line read back can be checked against a known user id.
+function authorLabel(author: { username?: string; id?: string } | null | undefined): string {
+  const name = author?.username ?? '?'
+  return author?.id ? `${name} (${author.id})` : name
+}
+
 function formatMessageLine(m: Message): string {
-  const who = m.author.id === client.user?.id ? 'me' : m.author.username
+  // The id travels with the name. A display name is chosen by its owner and
+  // says nothing about who sent a line, so history read back after a restart
+  // needs the same identity evidence a live message carries.
+  const who = m.author.id === client.user?.id ? 'me' : authorLabel(m.author)
   const parts: string[] = [`id: ${m.id}`]
 
   if (isForward(m)) {
@@ -2275,7 +2285,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           return { content: [{ type: 'text', text: '(no matches in allowlisted channels)' }] }
         }
         const lines = hits.map(m => {
-          const author = (m.author ?? {}) as { username?: string }
+          const author = (m.author ?? {}) as { username?: string; id?: string }
           // A REST hit is raw JSON with no cleanContent, so mentions are
           // resolved from the ids the payload lists.
           const mentioned = (m.mentions as { id: string; username: string }[] | undefined) ?? []
@@ -2307,7 +2317,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           )
           if (stickers) bits.push(`[sticker: ${stickers}]`)
           const body = bits.join(' ')
-          return `[${m.timestamp}] #${m.channel_id} ${author.username ?? '?'}: ${body}  (id: ${m.id})`
+          return `[${m.timestamp}] #${m.channel_id} ${authorLabel(author)}: ${body}  (id: ${m.id})`
         })
         const more =
           total !== undefined && total > offset

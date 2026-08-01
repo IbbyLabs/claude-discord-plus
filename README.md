@@ -361,6 +361,15 @@ the session sees the reply and not what it replies to.
 An outbound reply notifies the person it answers. A reply split across chunks
 notifies once, on the chunk carrying the reference.
 
+### Who sent a history line
+
+`fetch_messages` and `search_messages` name each sender as `username (id)`. A
+live message carries `user_id` in its envelope, so without the id in history
+anything read back — including after a restart — could only be identified by a
+display name, which its owner chooses. The id is evidence Discord supplied, not
+proof against a doctored transcript: good enough to recognise someone, not
+enough to act on something consequential without live confirmation.
+
 ### Where a message keeps its text
 
 `content` is only one of the places a Discord message says something, and a
