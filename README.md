@@ -28,13 +28,33 @@ lines. Title, description, fields and footer are now included:
 That line used to be empty. Identifiers living in an embed or a thread title
 were unreadable, which meant reaching into the bot's database to recover them.
 
+The same flattening runs on the way in, so a message that arrives from a channel
+carries its embed rather than nothing:
+
+```
+[embed: Container Start [IbbyLabs] · Container "xrdb" start (ghcr.io/ibbylabs/xrdb:latest) · Environment: IbbyLabs]
+```
+
+A #github or #updates channel delivers without needing a mention, and everything
+posted there is embed-only, so an empty `content` was the whole message. The
+embed goes in the content, where the message belongs — the attachment listing
+stays in the envelope meta, because an in-content annotation is forgeable by
+anyone who types it.
+
 **`search_messages`.** Wraps `GET /guilds/{guild.id}/messages/search`, available
 to bots since August 2025. Filters on content, author, channel, `has`, pinned
 and sort order.
 
-Results are re-checked against the allowlist per hit. Search spans a whole
-guild, so without that it would surface channels `fetch_messages` is not
-permitted to read.
+Search spans a whole guild, so the allowlist goes into the query as a
+multi-valued `channel_id` filter — Discord takes up to 500, and a forum's id
+covers its posts. Checking each result instead would find nothing in a tracker:
+a hit inside a forum post carries the post's own channel id, while the allowlist
+is keyed on the forum. Filtering in the query also stops channels the caller
+cannot read from spending the result budget.
+
+Discord caps one request at 25 results. `limit` goes to 200 and pages
+underneath, `offset` continues from an earlier call, and the reply names the
+offset to pass next when more matched than came back.
 
 **Thread, reply and attachment context.** `fetch_messages` now reports the thread
 name, the referenced message id, and attachment filenames with content types
@@ -42,11 +62,38 @@ instead of a bare `+2att`.
 
 **`delete_message` and `pin_message`.** Housekeeping the bot could not do.
 
-**`list_forum_threads`.** Lists a forum's posts with their id, status tags,
-archived state and message count, covering active and archived threads. Upstream
-can only see a post it was sent a message from, so everything nobody wrote in was
-invisible — which is most of a tracker. This is what makes triage possible from
-the outside rather than waiting to be told.
+**`list_forum_threads`.** Lists a forum's posts with their id, author, status
+tags, archived state, message count, and when each was opened and last active,
+covering active and archived threads. Upstream can only see a post it was sent a
+message from, so everything nobody wrote in was invisible — which is most of a
+tracker. This is what makes triage possible from the outside rather than waiting
+to be told.
+
+```
+Logo language is wrong  (id: 1532661861219045387, by: alice, tags: Confirmed, archived, 14 msgs, opened: 2026-07-02T09:14Z, last: 2026-07-28T16:02Z)
+```
+
+The timestamps are what a staleness sweep runs on: deciding a post has gone
+quiet used to mean opening every one of them. An author who is not already in
+the cache is reported by id rather than costing a lookup per post.
+
+**`create_forum_post`.** Opens a post: a title, an opening message, and
+optionally the tags it starts with. Nothing here could open one, so a bridge
+documented as filing bug reports actually asked a human to create the post.
+Returns the new thread's id and a jump URL.
+
+**`close_thread`.** Archives, locks, unarchives, unlocks, and sets the `PINNED`
+channel flag so a FAQ post sticks to the top of its forum. A tracker where
+nothing ever closes only grows, and `set_thread_tags` deliberately reopens
+archived threads to tag them, so something has to put them back. Asking for a
+state a thread already holds changes nothing and is not an error, so a sweep can
+close everything it triaged without checking first.
+
+**`forward_message`.** Forwards a message to another channel using
+`message_reference` type 1, which carries `message_snapshots` — the text, embeds
+and attachments as Discord renders them. Escalating by retyping the report loses
+exactly the screenshot the report was about. A forward carries no text of its
+own, so an optional note is posted first as its own message.
 
 **`fetch_messages` pages.** Discord caps a single request at 100 and rejects
 anything higher, so a longer thread is read by walking back from the oldest id
@@ -171,6 +218,40 @@ Failure is never silent. A non-zero exit, or a run past
 `DISCORD_TRANSCRIBE_TIMEOUT_MS` (60s by default, after which the child is
 killed), appends `[voice note: could not be transcribed]` and puts the reason in
 `transcript_error` and on stderr. The message is delivered either way.
+
+**"Report as bug", on right-click.** A message context-menu command, registered
+on connect. Picking it on a support question sitting in #general hands that
+message to the session — its text, its author, its jump URL and what it has
+attached — instead of asking whoever noticed to go and describe it in the tracker
+themselves.
+
+Discord discards an interaction nobody answers within three seconds and a
+session is minutes away, so the interaction is deferred immediately and
+acknowledged privately to whoever clicked. The real outcome then arrives as an
+ordinary message in the channel, not an interaction followup: the token dies
+after fifteen minutes and a session routinely runs longer than that.
+
+The command needs the `applications.commands` scope on the bot's invite. Without
+it registration fails and is logged, and the entry never appears. Who may use it
+is Discord's to answer — Server Settings → Integrations restricts a command by
+role or channel.
+
+**Mass mentions, on request only.** The client parses user mentions and nothing
+else, so `@everyone` typed at the bot — in a DM it mirrors, in a channel it
+relays — notifies nobody. That stays true regardless of what any message says.
+
+`reply` takes a `mentions` array for the case the operator actually wants:
+`"everyone"`, `"here"`, or `"role:<role id>"`.
+
+```json
+{ "chat_id": "…", "text": "v3.47.0 is out.", "mentions": ["everyone"] }
+```
+
+Omitted, nothing beyond user mentions is parsed. Present, the message is
+permitted exactly what was named — `everyone` and `here` both map to the
+`everyone` parse, and a role is passed by id in the `roles` list. `parse` never
+carries `roles`, which would permit every role named anywhere in the text. The
+opt-in is the parameter; message content cannot reach it.
 
 ## Relationship to upstream
 

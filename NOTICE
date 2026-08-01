@@ -10,9 +10,10 @@ Derived from upstream commit cf99fc252a44e3f36763abe1db8744757f1b0297
 
 Modifications by IbbyLabs, per Apache-2.0 section 4(b):
 
-  - Added search_messages, wrapping GET /guilds/{guild.id}/messages/search.
-    Results are re-filtered against the channel allowlist so search cannot
-    reach further than fetch_messages.
+  - Added search_messages, wrapping GET /guilds/{guild.id}/messages/search. The
+    channel allowlist goes into the query as a multi-valued channel_id filter, so
+    search cannot reach further than fetch_messages. Discord returns 25 results
+    per request; a larger limit is paged, and offset continues an earlier call.
   - fetch_messages now reports embed content, thread name, the referenced
     message id, and attachment filenames and content types, rather than the
     message text and an attachment count alone.
@@ -20,8 +21,17 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
   - Added list_forum_tags and set_thread_tags, so a forum thread's tags can be
     read and set by name. set_thread_tags reopens an archived thread to apply
     them and leaves it open.
-  - Added list_forum_threads, listing a forum's posts with their status tags.
-    Upstream can only see a post it was sent a message from.
+  - Added list_forum_threads, listing a forum's posts with their status tags,
+    author, and when each was opened and last active. Upstream can only see a
+    post it was sent a message from.
+  - Added create_forum_post, opening a post with a title, an opening message and
+    optional tags. Nothing upstream or in this fork could open one, so filing a
+    report was a request to a human rather than something the bridge did.
+  - Added close_thread, setting a thread's archived, locked and pinned state.
+    Asking for a state a thread already holds is a no-op rather than an error.
+  - Added forward_message, wrapping message_reference type 1 (FORWARD) so a
+    report reaches an escalation channel with its attachments and embeds intact
+    instead of being retyped as text.
   - fetch_messages pages past the 100-per-request cap Discord enforces, and
     takes a before cursor.
   - The inbound envelope carries the thread name and parent id. A tracker keeps
@@ -32,6 +42,10 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
   - Messages from other apps and webhooks are delivered rather than dropped;
     only this bot's own messages are skipped. Release and issue activity
     arrives by webhook, and upstream ignored all of it.
+  - An inbound message's embeds are flattened into the content it delivers, as
+    [embed: …]. An app or webhook leaves content empty and puts the message in
+    an embed, so the session was handed a blank message and had to go back for
+    the history to read it.
   - Added ensure_forum_tags, which adds tags a forum lacks and sends the
     existing ones back with them, since the underlying call replaces the list.
   - Relays reactions, content edits, deletions, member joins, leaves, role and
@@ -53,5 +67,13 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     transcriber is an external command set by DISCORD_TRANSCRIBER; a failure or
     a timeout appends [voice note: could not be transcribed] and the message is
     delivered regardless.
+  - The client is constructed with allowedMentions parse ['users'], so text alone
+    never reaches @everyone, @here or a role. reply takes a mentions parameter
+    naming exactly what one message may ping ("everyone", "here", "role:<id>");
+    parse never carries 'roles', which would permit every role named in the text.
+  - Registers a "Report as bug" message context-menu command and relays the
+    right-clicked message to the session as a report event. The interaction is
+    deferred immediately and the outcome is sent as an ordinary channel message,
+    since a session outlives the fifteen-minute interaction token.
 
 Upstream carries no NOTICE file; this one exists to record the above.
