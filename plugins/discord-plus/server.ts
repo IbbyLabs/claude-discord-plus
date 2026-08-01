@@ -210,7 +210,7 @@ const MAX_DESCRIBED_EMOJI = 100
 
 // Discord holds a typing indicator for about ten seconds.
 const TYPING_REFRESH_MS = 8_000
-const TYPING_MAX_MS = 10 * 60_000
+const TYPING_MAX_MS = 3 * 60_000
 
 const REMINDERS_FILE = join(STATE_DIR, 'reminders.json')
 const REMINDER_TICK_MS = 60_000
@@ -2740,12 +2740,17 @@ async function handleInbound(msg: Message): Promise<void> {
     return
   }
 
-  // Typing indicator, held until reply sends or the cap is reached. A turn runs
-  // for minutes and one sendTyping lasts ten seconds.
-  startTyping(chat_id)
+  // Typing indicator, but only when the message is directed at us — a mention, a
+  // DM, or a reply to something we said. A message relayed as channel context is
+  // being read, not answered, so it must not sit there typing. Held until the
+  // reply sends or the cap is reached; a turn runs for minutes and one
+  // sendTyping lasts ten seconds.
+  const access = result.access
+  if (isDM || (await isMentioned(msg, access.mentionPatterns))) {
+    startTyping(chat_id)
+  }
 
   // Ack reaction — lets the user know we're processing. Fire-and-forget.
-  const access = result.access
   if (access.ackReaction) {
     void msg.react(access.ackReaction).catch(() => {})
   }

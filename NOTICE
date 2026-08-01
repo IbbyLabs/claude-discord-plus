@@ -91,10 +91,11 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     the same allowlist check as a channel id, so pasting one cannot reach a
     channel that reading would refuse.
   - The typing indicator is held for the length of a turn rather than the ten
-    seconds a single sendTyping lasts. It starts on the inbound path, re-sends on
-    a timer and stops when the reply goes out. There is one timer per channel,
-    each carries an absolute deadline that ends it, and a failing pulse clears
-    it.
+    seconds a single sendTyping lasts. It starts only when the message is directed
+    at the bot — a mention, a DM, or a reply to something it said — so a message
+    read as channel context does not show the bot typing. It re-sends on a timer
+    and stops when the reply goes out. There is one timer per channel, each
+    carries an absolute deadline that ends it, and a failing pulse clears it.
   - Added remind, scheduling a message the bridge posts to a channel later, with
     list and cancel. Discord has no reminder API: the store is reminders.json
     next to access.json, a due time is read from a relative form ("in 2 hours"),
