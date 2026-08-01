@@ -94,6 +94,9 @@ const client = new Client({
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMessageReactions,
+    // Reactions in a DM are a separate intent from reactions in a guild, so
+    // without this one a reaction to a DM never reaches the gateway at all.
+    GatewayIntentBits.DirectMessageReactions,
     GatewayIntentBits.GuildMembers,
     // Populates member status in the cache for list_members. presenceUpdate is
     // never relayed.
