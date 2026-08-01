@@ -144,6 +144,34 @@ A failed mirror is logged and the message still goes through. Inbound DMs carry
 `is_dm` in the envelope so the session can hold a private message to a different
 standard than something said in front of a channel.
 
+**Voice notes are transcribed.** A voice note arrives as an ogg attachment the
+session cannot open, so its content is lost and the only possible reply is
+asking the sender to type it out. The first audio attachment on an inbound
+message is now transcribed and the text appended to the content:
+
+```
+[voice note: "the render came out blank again"]
+```
+
+The transcript is also in the envelope meta as `transcript`, with
+`transcript_language` when the transcriber reports one. A message with no text
+becomes the transcript alone.
+
+An attachment counts as audio when its content type starts with `audio/`, or
+when Discord marks the message with the voice-message flag. Only the first one
+is transcribed, so ten notes in a message do not hold delivery for minutes.
+
+Transcription runs an external command, `DISCORD_TRANSCRIBER`, defaulting to
+`~/.claude/bin/transcribe-audio.py`. It is given the downloaded file as its only
+argument and is expected to print the transcript on stdout, optionally prefixed
+with `[en]`. The file is removed afterwards. No such command means no
+annotation, so a bridge without a transcriber behaves as before.
+
+Failure is never silent. A non-zero exit, or a run past
+`DISCORD_TRANSCRIBE_TIMEOUT_MS` (60s by default, after which the child is
+killed), appends `[voice note: could not be transcribed]` and puts the reason in
+`transcript_error` and on stderr. The message is delivered either way.
+
 ## Relationship to upstream
 
 Forked from `cf99fc252a44e3f36763abe1db8744757f1b0297`, plugin version 0.0.4. Modifications are listed in

@@ -23,6 +23,7 @@ import {
   GatewayIntentBits,
   Partials,
   ChannelType,
+  MessageFlags,
   ButtonBuilder,
   ButtonStyle,
   ActionRowBuilder,
@@ -39,8 +40,9 @@ import {
   type Interaction,
 } from 'discord.js'
 import { randomBytes } from 'crypto'
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync } from 'fs'
-import { homedir } from 'os'
+import { spawn } from 'child_process'
+import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, unlinkSync } from 'fs'
+import { homedir, tmpdir } from 'os'
 import { join, sep } from 'path'
 
 const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
@@ -172,6 +174,14 @@ const MAX_CHUNK_LIMIT = 2000
 // Presence values Discord reports, most-present first.
 const STATUS_ORDER: string[] = ['online', 'idle', 'dnd', 'offline']
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+
+// Transcriber for inbound voice notes. Absent file means transcription is off.
+const TRANSCRIBER = process.env.DISCORD_TRANSCRIBER ?? join(homedir(), '.claude', 'bin', 'transcribe-audio.py')
+const TRANSCRIBE_TIMEOUT_MS =
+  Number(process.env.DISCORD_TRANSCRIBE_TIMEOUT_MS) > 0
+    ? Number(process.env.DISCORD_TRANSCRIBE_TIMEOUT_MS)
+    : 60_000
+const MAX_TRANSCRIPT_CHARS = 4000
 
 // reply's files param takes any path. .env is ~60 bytes and ships as an
 // upload. Claude can already Read+paste file contents, so this isn't a new
@@ -531,7 +541,7 @@ async function fetchAllowedChannel(id: string) {
   throw new Error(`channel ${id} is not allowlisted — add via /discord:access`)
 }
 
-async function downloadAttachment(att: Attachment): Promise<string> {
+async function downloadAttachment(att: Attachment, dir: string = INBOX_DIR): Promise<string> {
   if (att.size > MAX_ATTACHMENT_BYTES) {
     throw new Error(`attachment too large: ${(att.size / 1024 / 1024).toFixed(1)}MB, max ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB`)
   }
@@ -540,8 +550,8 @@ async function downloadAttachment(att: Attachment): Promise<string> {
   const name = att.name ?? `${att.id}`
   const rawExt = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1) : 'bin'
   const ext = rawExt.replace(/[^a-zA-Z0-9]/g, '') || 'bin'
-  const path = join(INBOX_DIR, `${Date.now()}-${att.id}.${ext}`)
-  mkdirSync(INBOX_DIR, { recursive: true })
+  const path = join(dir, `${Date.now()}-${att.id}.${ext}`)
+  mkdirSync(dir, { recursive: true })
   writeFileSync(path, buf)
   return path
 }
@@ -551,6 +561,96 @@ async function downloadAttachment(att: Attachment): Promise<string> {
 // where delimiter chars let the attacker break out of the untrusted frame.
 function safeAttName(att: Attachment): string {
   return (att.name ?? att.id).replace(/[\[\]\r\n;]/g, '_')
+}
+
+/**
+ * Voice-note transcription. A voice note arrives as an ogg attachment the
+ * session cannot open, so its content reaches nobody unless it is turned into
+ * text on the way in.
+ *
+ * Only the first audio attachment of a message is transcribed: ten notes in one
+ * message would otherwise hold delivery for minutes.
+ */
+
+type Transcription = { text: string; language: string } | { failure: string }
+
+function firstAudioAttachment(msg: Message): Attachment | undefined {
+  const isVoice = msg.flags.has(MessageFlags.IsVoiceMessage)
+  for (const att of msg.attachments.values()) {
+    if (isVoice || att.contentType?.startsWith('audio/')) return att
+  }
+  return undefined
+}
+
+// The transcript lands inside a [voice note: "…"] frame in the notification
+// body, where bracket and quote characters let a speaker break out of it.
+function safeTranscript(text: string): string {
+  return text.replace(/[\[\]"\r\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, MAX_TRANSCRIPT_CHARS)
+}
+
+// The transcriber prints `[en] text`.
+const TRANSCRIPT_LANG_RE = /^\[([a-zA-Z-]{2,8})\]\s*/
+
+function runTranscriber(path: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(TRANSCRIBER, [path], { stdio: ['ignore', 'pipe', 'pipe'] })
+    let out = ''
+    let err = ''
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, TRANSCRIBE_TIMEOUT_MS)
+    child.stdout?.on('data', (d: Buffer) => {
+      if (out.length < MAX_TRANSCRIPT_CHARS * 4) out += d.toString()
+    })
+    child.stderr?.on('data', (d: Buffer) => {
+      if (err.length < 4096) err += d.toString()
+    })
+    child.on('error', e => {
+      clearTimeout(timer)
+      reject(e)
+    })
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (timedOut) return reject(new Error(`timed out after ${TRANSCRIBE_TIMEOUT_MS}ms`))
+      if (code !== 0) return reject(new Error(err.trim() || `exit ${code}`))
+      const text = out.trim()
+      if (!text) return reject(new Error('empty transcript'))
+      resolve(text)
+    })
+  })
+}
+
+/**
+ * Returns undefined when transcription is not configured, so a bridge without a
+ * transcriber annotates nothing. Never throws: a failure is reported to the
+ * session as an unreadable voice note, and the message is delivered either way.
+ */
+async function transcribeAttachment(att: Attachment): Promise<Transcription | undefined> {
+  if (!existsSync(TRANSCRIBER)) return undefined
+  let path: string | undefined
+  try {
+    path = await downloadAttachment(att, tmpdir())
+    const raw = await runTranscriber(path)
+    const m = TRANSCRIPT_LANG_RE.exec(raw)
+    const text = safeTranscript(m ? raw.slice(m[0].length) : raw)
+    if (!text) return { failure: 'empty transcript' }
+    return { text, language: m?.[1]?.toLowerCase() ?? '' }
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`discord channel: transcription of ${safeAttName(att)} failed: ${reason}\n`)
+    // A Python traceback arrives as many lines; the meta value takes one.
+    return { failure: reason.replace(/\s+/g, ' ').trim().slice(0, 200) || 'unknown error' }
+  } finally {
+    if (path) {
+      try {
+        unlinkSync(path)
+      } catch (err) {
+        process.stderr.write(`discord channel: failed to remove ${path}: ${err}\n`)
+      }
+    }
+  }
 }
 
 const mcp = new Server(
@@ -1477,9 +1577,24 @@ async function handleInbound(msg: Message): Promise<void> {
     atts.push(`${safeAttName(att)} (${att.contentType ?? 'unknown'}, ${kb}KB)`)
   }
 
+  // Audio is the exception to listing-without-downloading: an ogg the session
+  // cannot open carries the whole message, so it is transcribed on the way in.
+  const audio = firstAudioAttachment(msg)
+  const voice = audio ? await transcribeAttachment(audio) : undefined
+  const voiceNote = !voice
+    ? ''
+    : 'text' in voice
+      ? `[voice note: "${voice.text}"]`
+      : '[voice note: could not be transcribed]'
+
   // Attachment listing goes in meta only — an in-content annotation is
-  // forgeable by any allowlisted sender typing that string.
-  const content = msg.content || (atts.length > 0 ? '(attachment)' : '')
+  // forgeable by any allowlisted sender typing that string. The transcript is
+  // the message rather than a note about it, so it goes in the content.
+  const lines: string[] = []
+  if (msg.content) lines.push(msg.content)
+  if (voiceNote) lines.push(voiceNote)
+  if (lines.length === 0 && atts.length > 0) lines.push('(attachment)')
+  const content = lines.join('\n')
 
   mcp.notification({
     method: 'notifications/claude/channel',
@@ -1502,6 +1617,10 @@ async function handleInbound(msg: Message): Promise<void> {
         ...(isDM ? { is_dm: 'true' } : {}),
         ...(msg.author.bot ? { author_is_bot: 'true' } : {}),
         ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
+        ...(voice && 'text' in voice
+          ? { transcript: voice.text, ...(voice.language ? { transcript_language: voice.language } : {}) }
+          : {}),
+        ...(voice && 'failure' in voice ? { transcript_error: voice.failure } : {}),
       },
     },
   }).catch(err => {
