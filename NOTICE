@@ -107,6 +107,21 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     was given. The pairing instruction keeps the product name, because it names
     the program the operator has to open.
 
+  - Inbound replies carry the message they answer: author and content, not just
+    the reference id, so a quoted report is readable without a second lookup.
+  - Mentions are delivered as names rather than ids. Content carries the resolved
+    form of a user, role or channel mention, and the ids travel in the envelope
+    meta as mentioned_users, mentioned_roles and mentioned_channels, since a tool
+    call and a mention back both need an id.
+  - A forwarded message is read from its message_snapshots and delivered as
+    [forwarded: …], with the origin as forwarded_from_message_id and
+    forwarded_from_chat_id. A forward leaves content empty, so upstream and this
+    fork both delivered it as a blank message.
+  - A components-v2 message is read from its component tree and delivered as
+    [components: …]. Such a message carries no content and no embeds, so every
+    text path stopped before reaching what it says. Text displays are collected
+    in order and control labels follow them; recursion is depth-capped.
+  - Polls and stickers on an inbound message are rendered as [poll: question —
+    answer (votes)] and [sticker: name]. Both leave content empty.
+
 Upstream carries no NOTICE file; this one exists to record the above.
-- Inbound replies carry the message they answer: author and content, not just
-  the reference id, so a quoted report is readable without a second lookup.

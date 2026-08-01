@@ -356,6 +356,53 @@ content — as `[replying to <who>: "..."]`, plus `reply_to_message_id` and
 `reply_to_user` in the meta. Discord sends only a reference id, so without this
 the session sees the reply and not what it replies to.
 
+### Where a message keeps its text
+
+`content` is only one of the places a Discord message says something, and a
+message that says nothing there is not an empty message. Each of the following
+is read on the way in, in history through `fetch_messages` and `search_messages`,
+in the excerpts on reaction, edit and delete events, and in the replied-to
+message:
+
+**Mentions read as names.** `@alice can you check this` arrives on the wire as
+`<@1147968681981247498> can you check this`, which names nobody. Content now
+carries the readable form, with user, role and channel mentions resolved:
+
+```
+@alice can you check this in #bugs
+```
+
+The ids are still what a tool call and a mention back need, so they travel in
+the meta as `mentioned_users`, `mentioned_roles` and `mentioned_channels`, each
+a `name=id` list.
+
+**Forwarded messages.** A forward carries its text in `message_snapshots` and
+leaves `content` empty, so forwarding something to the bot used to deliver a
+blank message. The snapshot's text, embeds, components, stickers and attachment
+names are rendered, and the origin travels as `forwarded_from_message_id` and
+`forwarded_from_chat_id`:
+
+```
+[forwarded: renderer fell over again on the 4k poster · attachments: log.txt]
+```
+
+**Components-v2 messages.** A message sent with the components-v2 flag has no
+`content` and no embeds at all; its text lives in the component tree. The tree
+is walked and the text displays are collected in order, with button and select
+labels after them:
+
+```
+[components: **Transcribed voice message from Ibby** · The message where I replied shouldn't show as empty. · buttons: Play / Dismiss]
+```
+
+**Polls and stickers.** A poll's question and options with their vote counts,
+and the name of a sticker sent on its own:
+
+```
+[poll: Ship it today? — yes (4) / tomorrow (1)]
+[sticker: thumbs up]
+```
+
 ## Relationship to upstream
 
 Forked from `cf99fc252a44e3f36763abe1db8744757f1b0297`, plugin version 0.0.4. Modifications are listed in

@@ -25,6 +25,7 @@ import {
   ChannelType,
   ChannelFlags,
   MessageFlags,
+  MessageReferenceType,
   ApplicationCommandType,
   ButtonBuilder,
   ButtonStyle,
@@ -474,7 +475,7 @@ async function mirrorDM(msg: Message, channelId: string): Promise<void> {
     throw new Error(`mirror channel ${channelId} is not a text channel`)
   }
   const atts = [...msg.attachments.values()].map(safeAttName).join(', ')
-  const flat = msg.content.replace(/[\r\n]+/g, ' ⏎ ')
+  const flat = flatten(messageBody(msg))
   const body = flat.length > 1500 ? `${flat.slice(0, 1500)}…` : flat
   await ch.send(
     `📥 DM from ${msg.author.username} (${msg.author.id}): ${body || '(no text)'}` +
@@ -1628,11 +1629,153 @@ function flattenEmbeds(embeds: readonly any[]): string {
   return rendered.join(' || ')
 }
 
+const flatten = (v: string) => v.replace(/[\r\n]+/g, ' ⏎ ')
+
+/**
+ * Mention ids rendered as names. A payload with no `cleanContent` — a REST
+ * search hit, a forwarded snapshot — carries `<@1147…>` where a name belongs.
+ * Ids that resolve to nothing are left as they came.
+ */
+function humaniseMentions(text: string, users: readonly { id: string; username: string }[] = []): string {
+  if (!text) return ''
+  const named = new Map(users.map(u => [u.id, u.username]))
+  return text
+    .replace(/<@!?(\d{15,25})>/g, (raw, id: string) => {
+      const name = named.get(id) ?? client.users.cache.get(id)?.username
+      return name ? `@${name}` : raw
+    })
+    .replace(/<@&(\d{15,25})>/g, (raw, id: string) => {
+      const role = client.guilds.cache.map(g => g.roles.cache.get(id)).find(r => !!r)
+      return role ? `@${role.name}` : raw
+    })
+    .replace(/<#(\d{15,25})>/g, (raw, id: string) => {
+      const ch = client.channels.cache.get(id)
+      return ch && 'name' in ch && ch.name ? `#${ch.name}` : raw
+    })
+}
+
+/** Message text with mentions as names. Falls back to the raw form when the
+ *  gateway handed over a partial. */
+function readableContent(m: Message | PartialMessage): string {
+  return m.cleanContent || m.content || ''
+}
+
+/** Sticker names. A sticker-only message has no content at all. */
+function flattenStickers(stickers: readonly { name: string }[]): string {
+  return stickers.map(s => flatten(s.name)).join(', ')
+}
+
+/** A poll's question and its options with vote counts. The message carrying a
+ *  poll is empty. */
+function flattenPoll(poll: Message['poll'] | null | undefined): string {
+  if (!poll) return ''
+  const question = flatten(poll.question.text ?? '')
+  const answers = [...poll.answers.values()].map(a => {
+    const votes = typeof a.voteCount === 'number' ? ` (${a.voteCount})` : ''
+    return `${flatten(a.text ?? a.emoji?.name ?? '?')}${votes}`
+  })
+  return answers.length > 0 ? `${question} — ${answers.join(' / ')}` : question
+}
+
+/**
+ * Text and control labels from message components. A Components-v2 message
+ * carries its whole body here (type 10 text displays, nested inside type 17
+ * containers and type 9 sections) and leaves `content` empty, so a reader that
+ * stops at content and embeds sees a blank message. Media and file components
+ * hold no text and contribute nothing.
+ */
+const MAX_COMPONENT_DEPTH = 8
+
+function flattenComponents(components: readonly any[]): string {
+  const texts: string[] = []
+  const labels: string[] = []
+  const walk = (list: readonly any[], depth: number) => {
+    if (depth > MAX_COMPONENT_DEPTH) return
+    for (const c of list ?? []) {
+      if (typeof c?.content === 'string' && c.content) texts.push(flatten(c.content))
+      const label = c?.label ?? c?.placeholder
+      if (typeof label === 'string' && label) labels.push(flatten(label))
+      if (Array.isArray(c?.components)) walk(c.components, depth + 1)
+      if (c?.accessory) walk([c.accessory], depth + 1)
+    }
+  }
+  walk(components ?? [], 0)
+  const parts = [...texts]
+  if (labels.length > 0) parts.push(`buttons: ${labels.join(' / ')}`)
+  return parts.join(' · ')
+}
+
+function isForward(m: Message | PartialMessage): boolean {
+  return (m.messageSnapshots?.size ?? 0) > 0 || m.reference?.type === MessageReferenceType.Forward
+}
+
+/** A forwarded message keeps its text in a snapshot; `content` is empty. A
+ *  forwarded webhook post is embed-only, so the embeds come too. */
+function flattenForwards(m: Message | PartialMessage): string {
+  const rendered: string[] = []
+  for (const snap of m.messageSnapshots?.values() ?? []) {
+    const users = [...(snap.mentions?.users?.values() ?? [])]
+    const bits = [
+      humaniseMentions(flatten(String(snap.content ?? '')), users),
+      flattenEmbeds(snap.embeds ?? []),
+      flattenComponents(snap.components ?? []),
+    ].filter(v => v.length > 0)
+    const stickers = flattenStickers([...(snap.stickers?.values() ?? [])])
+    if (stickers) bits.push(`sticker: ${stickers}`)
+    const atts = [...(snap.attachments?.values() ?? [])].map(safeAttName)
+    if (atts.length > 0) bits.push(`attachments: ${atts.join(', ')}`)
+    rendered.push(bits.join(' · ') || '(no text)')
+  }
+  return rendered.join(' || ')
+}
+
+/** The readable body of a message, from wherever Discord put it. Text first,
+ *  then the places a message with empty content keeps what it says. */
+function messageBody(m: Message | PartialMessage): string {
+  const forwarded = flattenForwards(m)
+  const poll = flattenPoll(m.poll)
+  const stickers = flattenStickers([...(m.stickers?.values() ?? [])])
+  const components = flattenComponents(m.components ?? [])
+  return (
+    readableContent(m) ||
+    (forwarded ? `[forwarded: ${forwarded}]` : '') ||
+    flattenEmbeds(m.embeds ?? []) ||
+    (poll ? `[poll: ${poll}]` : '') ||
+    (stickers ? `[sticker: ${stickers}]` : '') ||
+    (components ? `[components: ${components}]` : '')
+  )
+}
+
+/**
+ * The ids behind the names now in the content. A tool call and a mention back
+ * both need the id, and a display name is not one.
+ */
+function mentionMeta(msg: Message): Record<string, string> {
+  const pairs = (items: readonly { id: string; name: string }[]) =>
+    items.map(i => `${flatten(i.name)}=${i.id}`).join('; ')
+  const users = [...msg.mentions.users.values()].map(u => ({ id: u.id, name: u.username }))
+  const roles = [...msg.mentions.roles.values()].map(r => ({ id: r.id, name: r.name }))
+  const channels = [...msg.mentions.channels.values()].map(c => ({
+    id: c.id,
+    name: 'name' in c && c.name ? c.name : c.id,
+  }))
+  return {
+    ...(users.length > 0 ? { mentioned_users: pairs(users) } : {}),
+    ...(roles.length > 0 ? { mentioned_roles: pairs(roles) } : {}),
+    ...(channels.length > 0 ? { mentioned_channels: pairs(channels) } : {}),
+  }
+}
+
 function formatMessageLine(m: Message): string {
   const who = m.author.id === client.user?.id ? 'me' : m.author.username
   const parts: string[] = [`id: ${m.id}`]
 
-  if (m.reference?.messageId) parts.push(`reply to: ${m.reference.messageId}`)
+  if (isForward(m)) {
+    const from = m.reference
+    if (from?.messageId) parts.push(`forwarded from: ${from.channelId}/${from.messageId}`)
+  } else if (m.reference?.messageId) {
+    parts.push(`reply to: ${m.reference.messageId}`)
+  }
 
   if (m.attachments.size > 0) {
     const files = [...m.attachments.values()]
@@ -1644,15 +1787,23 @@ function formatMessageLine(m: Message): string {
   // Tool result is newline-joined; multi-line content forges adjacent rows.
   // History includes ungated senders (no-@mention messages in an opted-in
   // channel never hit the gate but still live in channel history).
-  const flat = (v: string) => v.replace(/[\r\n]+/g, ' ⏎ ')
-  let text = flat(m.content)
+  const bits: string[] = []
+  const body = flatten(readableContent(m))
+  if (body) bits.push(body)
 
-  // Bots and webhooks put the whole message in an embed and leave content
-  // empty, so reading content alone renders the most informative messages as
-  // blank lines. Flattened rather than pretty-printed to keep one row per
-  // message.
+  // Everything below is somewhere a message keeps text while `content` is
+  // empty. Flattened rather than pretty-printed to keep one row per message.
+  const forwarded = flattenForwards(m)
+  if (forwarded) bits.push(`[forwarded: ${forwarded}]`)
   const embedText = flattenEmbeds(m.embeds)
-  if (embedText) text = text ? `${text} [embed: ${embedText}]` : `[embed: ${embedText}]`
+  if (embedText) bits.push(`[embed: ${embedText}]`)
+  const componentText = flattenComponents(m.components)
+  if (componentText) bits.push(`[components: ${componentText}]`)
+  const pollText = flattenPoll(m.poll)
+  if (pollText) bits.push(`[poll: ${pollText}]`)
+  const stickerText = flattenStickers([...m.stickers.values()])
+  if (stickerText) bits.push(`[sticker: ${stickerText}]`)
+  const text = bits.join(' ')
 
   return `[${m.createdAt.toISOString()}] ${who}: ${text}  (${parts.join(' | ')})`
 }
@@ -2111,11 +2262,37 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
         const lines = hits.map(m => {
           const author = (m.author ?? {}) as { username?: string }
-          let body = String(m.content ?? '').replace(/[\r\n]+/g, ' ⏎ ')
-          // Same reason as fetch_messages: a hit whose text lives in an embed
-          // would otherwise come back as an empty line.
+          // A REST hit is raw JSON with no cleanContent, so mentions are
+          // resolved from the ids the payload lists.
+          const mentioned = (m.mentions as { id: string; username: string }[] | undefined) ?? []
+          const bits: string[] = []
+          const text = humaniseMentions(flatten(String(m.content ?? '')), mentioned)
+          if (text) bits.push(text)
+          // Same reason as fetch_messages: a hit whose text lives anywhere but
+          // content would otherwise come back as an empty line.
+          const forwarded = ((m.message_snapshots as any[]) ?? [])
+            .map(s => {
+              const snap = (s?.message ?? {}) as Record<string, unknown>
+              return [
+                humaniseMentions(flatten(String(snap.content ?? ''))),
+                flattenEmbeds((snap.embeds as any[]) ?? []),
+                flattenComponents((snap.components as any[]) ?? []),
+              ]
+                .filter(v => v.length > 0)
+                .join(' · ')
+            })
+            .filter(v => v.length > 0)
+            .join(' || ')
+          if (forwarded) bits.push(`[forwarded: ${forwarded}]`)
           const embedded = flattenEmbeds((m.embeds as any[]) ?? [])
-          if (embedded) body = body ? `${body} [embed: ${embedded}]` : `[embed: ${embedded}]`
+          if (embedded) bits.push(`[embed: ${embedded}]`)
+          const components = flattenComponents((m.components as any[]) ?? [])
+          if (components) bits.push(`[components: ${components}]`)
+          const stickers = flattenStickers(
+            ((m.sticker_items as { name: string }[] | undefined) ?? []).filter(s => !!s?.name),
+          )
+          if (stickers) bits.push(`[sticker: ${stickers}]`)
+          const body = bits.join(' ')
           return `[${m.timestamp}] #${m.channel_id} ${author.username ?? '?'}: ${body}  (id: ${m.id})`
         })
         const more =
@@ -2360,8 +2537,7 @@ async function handleReportAsBug(interaction: MessageContextMenuCommandInteracti
   }
 
   const target = interaction.targetMessage
-  const raw = target.content || flattenEmbeds(target.embeds ?? [])
-  const flat = raw.replace(/[\r\n]+/g, ' ⏎ ').trim()
+  const flat = flatten(messageBody(target)).trim()
   const body = flat.length > REPORT_EXCERPT_CHARS ? `${flat.slice(0, REPORT_EXCERPT_CHARS)}…` : flat
   const atts = [...target.attachments.values()].map(
     a => `${safeAttName(a)} (${a.contentType ?? 'unknown'})`,
@@ -2473,10 +2649,12 @@ client.on('messageCreate', msg => {
  */
 async function replyContextFor(msg: Message): Promise<{ text: string; meta: Record<string, string> } | undefined> {
   const refId = msg.reference?.messageId
-  if (!refId) return undefined
+  // A forward carries a reference too, pointing at what was forwarded. It is
+  // rendered from its snapshot, not as something the sender is answering.
+  if (!refId || isForward(msg)) return undefined
   try {
     const ref = await msg.fetchReference()
-    const body = String(ref.content ?? '').replace(/[\r\n]+/g, ' ⏎ ') || flattenEmbeds(ref.embeds ?? [])
+    const body = flatten(messageBody(ref))
     const atts = [...ref.attachments.values()].map(safeAttName)
     const shown = body || (atts.length > 0 ? `(${atts.join(', ')})` : '(no text)')
     const who = ref.author?.id === client.user?.id ? 'you' : (ref.author?.username ?? 'someone')
@@ -2581,13 +2759,27 @@ async function handleInbound(msg: Message): Promise<void> {
   // by any allowlisted sender typing that string.
   const embedText = flattenEmbeds(msg.embeds)
 
+  // A Components-v2 message is the same story one layer further in: its text
+  // lives in the component tree and content is empty. Forwards, polls and
+  // stickers each hold their text somewhere content is not.
+  const componentText = flattenComponents(msg.components)
+  const forwarded = flattenForwards(msg)
+  const pollText = flattenPoll(msg.poll)
+  const stickerText = flattenStickers([...msg.stickers.values()])
+
   // What a reply answers is context for everything after it, so it leads.
   const replyCtx = await replyContextFor(msg)
 
   const lines: string[] = []
   if (replyCtx) lines.push(replyCtx.text)
-  if (msg.content) lines.push(msg.content)
+  // Mentions as names: <@1147…> names nobody. The ids stay in meta.
+  const body = readableContent(msg)
+  if (body) lines.push(body)
+  if (forwarded) lines.push(`[forwarded: ${forwarded}]`)
   if (embedText) lines.push(`[embed: ${embedText}]`)
+  if (componentText) lines.push(`[components: ${componentText}]`)
+  if (pollText) lines.push(`[poll: ${pollText}]`)
+  if (stickerText) lines.push(`[sticker: ${stickerText}]`)
   if (voiceNote) lines.push(voiceNote)
   if (lines.length === 0 && atts.length > 0) lines.push('(attachment)')
   const content = lines.join('\n')
@@ -2611,6 +2803,14 @@ async function handleInbound(msg: Message): Promise<void> {
         // A DM reaches the session through a private channel with no witnesses,
         // so it is worth telling apart from something said in a channel.
         ...(replyCtx ? replyCtx.meta : {}),
+        ...mentionMeta(msg),
+        ...(isForward(msg) && msg.reference?.messageId
+          ? {
+              forwarded_from_message_id: msg.reference.messageId,
+              forwarded_from_chat_id: msg.reference.channelId,
+            }
+          : {}),
+        ...(stickerText ? { stickers: stickerText } : {}),
         ...(isDM ? { is_dm: 'true' } : {}),
         ...(msg.author.bot ? { author_is_bot: 'true' } : {}),
         ...(atts.length > 0 ? { attachment_count: String(atts.length), attachments: atts.join('; ') } : {}),
@@ -2644,7 +2844,7 @@ function excerpt(text: string): string {
 }
 
 function messageExcerpt(m: Message | PartialMessage): string {
-  return excerpt(m.content || flattenEmbeds(m.embeds ?? []))
+  return excerpt(messageBody(m))
 }
 
 function relayEvent(event: string, content: string, meta: Record<string, string>): void {
@@ -2777,7 +2977,7 @@ async function relayEdit(
 
   const who = fresh.author?.username ?? '?'
   const after = messageExcerpt(fresh)
-  const from = before === null ? '(before not cached)' : `"${excerpt(before)}"`
+  const from = before === null ? '(before not cached)' : `"${excerpt(readableContent(oldMsg) || before)}"`
 
   relayEvent('message_edit', `[edit] ${who} edited ${fresh.id}: ${from} → "${after}"`, {
     chat_id: fresh.channelId,
