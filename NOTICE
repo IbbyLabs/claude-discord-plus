@@ -71,10 +71,13 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     never reaches @everyone, @here or a role. reply takes a mentions parameter
     naming exactly what one message may ping ("everyone", "here", "role:<id>");
     parse never carries 'roles', which would permit every role named in the text.
-  - Registers a "Report as bug" message context-menu command and relays the
-    right-clicked message to the session as a report event. The interaction is
-    deferred immediately and the outcome is sent as an ordinary channel message,
-    since a session outlives the fifteen-minute interaction token.
+  - A reply notifies the person being replied to, once, on the chunk carrying
+    the reference. Upstream suppresses that notification for every message.
+  - Registers "Report as bug" and "Report as feature request" message
+    context-menu commands and relays the right-clicked message to the session as
+    a report event, carrying report_kind. The interaction is deferred immediately
+    and the outcome is sent as an ordinary channel message, since a session
+    outlives the fifteen-minute interaction token.
 
   - Added describe_server, reporting a guild's channels and categories with their
     ids and types, its roles with position and colour, its custom emoji and its

@@ -1,7 +1,7 @@
 {
   "name": "discord-plus",
   "description": "Discord channel for Claude Code with access control, extended: a server map of channels, roles and emoji, message search with paging, message-link lookup, embed and thread context, attachment detail, forum posting, tagging and closing, message forwarding, native polls, scheduled reminders, a sustained typing indicator, a report-as-bug context menu, opt-in mass mentions, delete and pin, reaction, edit, member and voice events, a member roster, voice-note transcription, and inbound messages read wherever they keep their text: mentions as names, forwards, components-v2 text, polls and stickers.",
-  "version": "0.13.3",
+  "version": "0.13.4",
   "keywords": [
     "channel",
     "discord",

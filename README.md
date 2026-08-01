@@ -239,11 +239,13 @@ Failure is never silent. A non-zero exit, or a run past
 killed), appends `[voice note: could not be transcribed]` and puts the reason in
 `transcript_error` and on stderr. The message is delivered either way.
 
-**"Report as bug", on right-click.** A message context-menu command, registered
-on connect. Picking it on a support question sitting in #general hands that
-message to the session — its text, its author, its jump URL and what it has
-attached — instead of asking whoever noticed to go and describe it in the tracker
-themselves.
+**"Report as bug" and "Report as feature request", on right-click.** Two message
+context-menu commands, registered on connect. Picking one on a support question
+or a suggestion sitting in #general hands that message to the session — its text,
+its author, its jump URL and what it has attached — instead of asking whoever
+noticed to go and describe it in the tracker themselves. `report_kind` on the
+event says which of the two was picked, so the session knows which forum it
+belongs in and who to credit.
 
 Discord discards an interaction nobody answers within three seconds and a
 session is minutes away, so the interaction is deferred immediately and
@@ -355,6 +357,9 @@ An inbound reply carries the message it answers — author and an excerpt of the
 content — as `[replying to <who>: "..."]`, plus `reply_to_message_id` and
 `reply_to_user` in the meta. Discord sends only a reference id, so without this
 the session sees the reply and not what it replies to.
+
+An outbound reply notifies the person it answers. A reply split across chunks
+notifies once, on the chunk carrying the reference.
 
 ### Where a message keeps its text
 
