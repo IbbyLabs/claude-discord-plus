@@ -105,6 +105,10 @@ const client = new Client({
     GatewayIntentBits.GuildPresences,
     GatewayIntentBits.GuildVoiceStates,
   ],
+  // Without this Discord parses every mention in anything the bot sends. The
+  // bot holds Administrator and mirrors raw DM text into a channel, so a
+  // stranger could mass-ping the server through it just by typing @everyone.
+  allowedMentions: { parse: ['users'], repliedUser: false },
   // DMs arrive as partial channels — messageCreate never fires without this.
   // Reactions, edits and deletes on messages older than the cache arrive as
   // partials and are dropped entirely without the rest.
@@ -533,7 +537,10 @@ async function fetchAllowedChannel(id: string) {
   const access = loadAccess()
   if (ch.type === ChannelType.DM) {
     const userId = ch.recipientId ?? dmChannelUsers.get(id)
+    // Whoever the inbound gate accepted has to be answerable, or the reply to a
+    // DM this bot chose to receive throws instead of being sent.
     if (userId && access.allowFrom.includes(userId)) return ch
+    if (userId && access.dmPolicy === 'guild' && (await sharesGuild(userId))) return ch
   } else {
     const key = ch.isThread() ? ch.parentId ?? ch.id : ch.id
     if (channelPolicy(access, key)) return ch
