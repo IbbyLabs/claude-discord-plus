@@ -2658,14 +2658,32 @@ async function replyContextFor(msg: Message): Promise<{ text: string; meta: Reco
     const atts = [...ref.attachments.values()].map(safeAttName)
     const shown = body || (atts.length > 0 ? `(${atts.join(', ')})` : '(no text)')
     const who = ref.author?.id === client.user?.id ? 'you' : (ref.author?.username ?? 'someone')
-    return {
-      text: `[replying to ${who}: "${excerpt(shown, REPLY_EXCERPT_CHARS)}"]`,
-      meta: {
-        reply_to_message_id: refId,
-        reply_to_user: ref.author?.username ?? '',
-        reply_to_user_id: ref.author?.id ?? '',
-      },
+    const meta: Record<string, string> = {
+      reply_to_message_id: refId,
+      reply_to_user: ref.author?.username ?? '',
+      reply_to_user_id: ref.author?.id ?? '',
     }
+    let text = `[replying to ${who}: "${excerpt(shown, REPLY_EXCERPT_CHARS)}"`
+    // When the quoted message is itself a reply, surface its parent too, so a
+    // nested reply is not read without the thing it answers. One extra hop only.
+    const parentId = ref.reference?.messageId
+    if (parentId && !isForward(ref)) {
+      try {
+        const parent = await ref.fetchReference()
+        const pBody = flatten(messageBody(parent))
+        const pAtts = [...parent.attachments.values()].map(safeAttName)
+        const pShown = pBody || (pAtts.length > 0 ? `(${pAtts.join(', ')})` : '(no text)')
+        const pWho = parent.author?.id === client.user?.id ? 'you' : (parent.author?.username ?? 'someone')
+        text += `, which replied to ${pWho}: "${excerpt(pShown, REPLY_PARENT_EXCERPT_CHARS)}"`
+        meta.reply_to_parent_message_id = parentId
+        meta.reply_to_parent_user = parent.author?.username ?? ''
+        meta.reply_to_parent_user_id = parent.author?.id ?? ''
+      } catch (err) {
+        process.stderr.write(`discord channel: could not read the second-level replied-to message ${parentId}: ${err}\n`)
+      }
+    }
+    text += ']'
+    return { text, meta }
   } catch (err) {
     process.stderr.write(`discord channel: could not read the replied-to message ${refId}: ${err}\n`)
     return { text: `[replying to message ${refId}, which could not be read]`, meta: { reply_to_message_id: refId } }
@@ -2841,6 +2859,9 @@ const EVENT_EXCERPT_CHARS = 90
 // text, not the glanceable width an ambient event gets. Bounded so a very long
 // quoted message cannot bloat every inbound; the id is in meta for the rest.
 const REPLY_EXCERPT_CHARS = 1500
+// The second level is context of context: enough to place the reply, not its
+// full body. One extra hop only, so a reply chain cannot expand the preview.
+const REPLY_PARENT_EXCERPT_CHARS = 300
 
 function excerpt(text: string, limit = EVENT_EXCERPT_CHARS): string {
   const flat = text.replace(/[\r\n]+/g, ' ⏎ ').trim()
