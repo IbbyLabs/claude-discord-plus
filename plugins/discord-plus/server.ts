@@ -1059,6 +1059,29 @@ async function fireDueReminders(): Promise<void> {
   }
 }
 
+// Attachments pulled from a message, so deleting the message can take them with
+// it. A poster URL with an API key on it was pasted and withdrawn thirty seconds
+// later, and the downloaded copy stayed on disk: a sender withdrawing a message
+// should withdraw it here too.
+const downloadedByMessage = new Map<string, string[]>()
+
+function forgetDownloads(messageId: string): void {
+  const paths = downloadedByMessage.get(messageId)
+  if (!paths) return
+  downloadedByMessage.delete(messageId)
+  for (const path of paths) {
+    try {
+      unlinkSync(path)
+      process.stderr.write(`discord channel: removed ${path}, its message was deleted\n`)
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException
+      if (e?.code !== 'ENOENT') {
+        process.stderr.write(`discord channel: could not remove ${path}: ${err}\n`)
+      }
+    }
+  }
+}
+
 async function downloadAttachment(att: Attachment, dir: string = INBOX_DIR): Promise<string> {
   if (att.size > MAX_ATTACHMENT_BYTES) {
     throw new Error(`attachment too large: ${(att.size / 1024 / 1024).toFixed(1)}MB, max ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB`)
@@ -2399,11 +2422,17 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           return { content: [{ type: 'text', text: 'message has no attachments' }] }
         }
         const lines: string[] = []
+        const saved: string[] = []
         for (const att of msg.attachments.values()) {
           const path = await downloadAttachment(att)
+          saved.push(path)
           const kb = (att.size / 1024).toFixed(0)
           lines.push(`  ${path}  (${safeAttName(att)}, ${att.contentType ?? 'unknown'}, ${kb}KB)`)
         }
+        downloadedByMessage.set(msg.id, [
+          ...(downloadedByMessage.get(msg.id) ?? []),
+          ...saved,
+        ])
         return {
           content: [{ type: 'text', text: `downloaded ${lines.length} attachment(s):\n${lines.join('\n')}` }],
         }
@@ -3051,6 +3080,9 @@ client.on('messageDelete', msg => {
 })
 
 async function relayDelete(msg: Message | PartialMessage): Promise<void> {
+  // Before anything else, and regardless of whether the channel is one that
+  // relays: a withdrawn message's attachment should not survive the withdrawal.
+  forgetDownloads(msg.id)
   const known = msg.partial ? null : msg
   if (known?.author?.id === client.user?.id) return
   if (!(await ambientChannelAllowed(msg.channelId))) return

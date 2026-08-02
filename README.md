@@ -361,6 +361,13 @@ the session sees the reply and not what it replies to.
 An outbound reply notifies the person it answers. A reply split across chunks
 notifies once, on the chunk carrying the reference.
 
+### A withdrawn message withdraws its attachment
+
+`download_attachment` records what it pulled and from which message. When that
+message is deleted, the files go with it. Someone pasting a config and thinking
+better of it is the case this exists for — without it the sender's deletion
+removes the message from Discord and leaves the copy on disk.
+
 ### Who sent a history line
 
 `fetch_messages` and `search_messages` name each sender as `username (id)`. A
