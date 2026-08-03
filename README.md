@@ -228,6 +228,15 @@ An attachment counts as audio when its content type starts with `audio/`, or
 when Discord marks the message with the voice-message flag. Only the first one
 is transcribed, so ten notes in a message do not hold delivery for minutes.
 
+A note too long to transcribe in one run is split with `ffmpeg` into
+`DISCORD_TRANSCRIBE_CHUNK_SECONDS` pieces (45 by default), each transcribed
+inside its own timeout and joined in order, so length is not a ceiling. A piece
+that fails leaves a `[…]` gap so the rest of the note still arrives, and a note
+where every piece fails becomes `[voice note: could not be transcribed:
+<reason>]` with the reason carried through. Splitting needs `ffprobe`/`ffmpeg`
+on the path (overridable with `DISCORD_FFPROBE`/`DISCORD_FFMPEG`); without them a
+short note still transcribes in one pass.
+
 Transcription runs an external command, `DISCORD_TRANSCRIBER`, defaulting to
 `~/.claude/bin/transcribe-audio.py`. It is given the downloaded file as its only
 argument and is expected to print the transcript on stdout, optionally prefixed

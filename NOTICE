@@ -64,9 +64,12 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
   - Inbound voice notes are transcribed and the text is appended to the message
     content as [voice note: "…"], with transcript in the envelope meta. Upstream
     relays the ogg as an attachment name, so the content is unreadable. The
-    transcriber is an external command set by DISCORD_TRANSCRIBER; a failure or
-    a timeout appends [voice note: could not be transcribed] and the message is
-    delivered regardless.
+    transcriber is an external command set by DISCORD_TRANSCRIBER. A note longer
+    than one transcriber run is split with ffmpeg into pieces that are
+    transcribed in sequence and joined, so its length is not a ceiling and a
+    piece that fails leaves a […] gap rather than dropping the whole note. A
+    total failure appends [voice note: could not be transcribed: <reason>] and
+    the message is delivered regardless.
   - The client is constructed with allowedMentions parse ['users'], so text alone
     never reaches @everyone, @here or a role. reply takes a mentions parameter
     naming exactly what one message may ping ("everyone", "here", "role:<id>");

@@ -48,7 +48,7 @@ import {
 } from 'discord.js'
 import { randomBytes } from 'crypto'
 import { spawn } from 'child_process'
-import { readFileSync, writeFileSync, mkdirSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, unlinkSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, sep } from 'path'
 
@@ -234,6 +234,16 @@ const TRANSCRIBE_TIMEOUT_MS =
     ? Number(process.env.DISCORD_TRANSCRIBE_TIMEOUT_MS)
     : 60_000
 const MAX_TRANSCRIPT_CHARS = 4000
+// A note longer than the timeout can transcribe is split into pieces that each
+// fit inside one TRANSCRIBE_TIMEOUT_MS and transcribed in sequence, so length
+// stops being a ceiling. ffprobe/ffmpeg do the split; without them the bridge
+// still transcribes a short note in one pass.
+const FFPROBE = process.env.DISCORD_FFPROBE ?? 'ffprobe'
+const FFMPEG = process.env.DISCORD_FFMPEG ?? 'ffmpeg'
+const TRANSCRIBE_CHUNK_SECONDS =
+  Number(process.env.DISCORD_TRANSCRIBE_CHUNK_SECONDS) > 0
+    ? Number(process.env.DISCORD_TRANSCRIBE_CHUNK_SECONDS)
+    : 45
 
 // reply's files param takes any path. .env is ~60 bytes and ships as an
 // upload. Claude can already Read+paste file contents, so this isn't a new
@@ -1168,16 +1178,131 @@ function runTranscriber(path: string): Promise<string> {
   })
 }
 
+// Runs a helper process, capturing stdout/stderr and killing it past the
+// timeout. Rejects on spawn error or timeout; resolves with the exit code
+// otherwise so the caller decides what a non-zero code means.
+function runCommand(cmd: string, args: string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }, timeoutMs)
+    child.stdout?.on('data', (d: Buffer) => {
+      if (stdout.length < 1_000_000) stdout += d.toString()
+    })
+    child.stderr?.on('data', (d: Buffer) => {
+      if (stderr.length < 4096) stderr += d.toString()
+    })
+    child.on('error', e => {
+      clearTimeout(timer)
+      reject(e)
+    })
+    child.on('close', code => {
+      clearTimeout(timer)
+      if (timedOut) return reject(new Error(`${cmd} timed out after ${timeoutMs}ms`))
+      resolve({ code: code ?? -1, stdout, stderr })
+    })
+  })
+}
+
+// Audio duration in seconds via ffprobe, or undefined when ffprobe is missing or
+// cannot read the file — the caller then transcribes in one pass.
+async function probeDurationSeconds(path: string): Promise<number | undefined> {
+  try {
+    const { code, stdout } = await runCommand(
+      FFPROBE,
+      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', path],
+      15_000,
+    )
+    if (code !== 0) return undefined
+    const secs = Number(stdout.trim())
+    return Number.isFinite(secs) && secs > 0 ? secs : undefined
+  } catch {
+    return undefined
+  }
+}
+
+// Splits audio into TRANSCRIBE_CHUNK_SECONDS pieces by stream copy — no
+// re-encode, so it is quick — and returns them in order. An empty result means
+// segmentation was not possible and the caller falls back to a single pass.
+async function segmentAudio(path: string, workDir: string): Promise<string[]> {
+  const pattern = join(workDir, 'chunk-%04d.ogg')
+  try {
+    const { code } = await runCommand(
+      FFMPEG,
+      ['-hide_banner', '-loglevel', 'error', '-i', path, '-f', 'segment', '-segment_time', String(TRANSCRIBE_CHUNK_SECONDS), '-c', 'copy', '-reset_timestamps', '1', pattern],
+      60_000,
+    )
+    if (code !== 0) return []
+    return readdirSync(workDir)
+      .filter(n => /^chunk-\d+\.ogg$/.test(n))
+      .sort()
+      .map(n => join(workDir, n))
+  } catch {
+    return []
+  }
+}
+
+// Transcribes each chunk in turn and joins the results. A chunk that fails
+// leaves a visible […] gap rather than dropping the note, so the first minute of
+// a long note survives a failure in the third. Returns undefined only when every
+// chunk failed, so the caller can report the note as unreadable.
+async function transcribeChunks(chunks: string[]): Promise<{ text: string; language: string } | undefined> {
+  const parts: string[] = []
+  let language = ''
+  let anyOk = false
+  for (const chunk of chunks) {
+    try {
+      const raw = await runTranscriber(chunk)
+      const m = TRANSCRIPT_LANG_RE.exec(raw)
+      if (!language && m) language = m[1].toLowerCase()
+      const text = m ? raw.slice(m[0].length) : raw
+      const trimmed = text.trim()
+      if (trimmed) {
+        parts.push(trimmed)
+        anyOk = true
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`discord channel: transcription of a chunk failed: ${reason}\n`)
+      parts.push('[…]')
+    }
+  }
+  if (!anyOk) return undefined
+  const text = safeTranscript(parts.join(' '))
+  if (!text) return undefined
+  return { text, language }
+}
+
 /**
  * Returns undefined when transcription is not configured, so a bridge without a
  * transcriber annotates nothing. Never throws: a failure is reported to the
  * session as an unreadable voice note, and the message is delivered either way.
+ *
+ * A note that would exceed the per-run timeout is split with ffmpeg and
+ * transcribed in pieces, so its length is not a ceiling and a failure part-way
+ * still delivers the part that transcribed.
  */
 async function transcribeAttachment(att: Attachment): Promise<Transcription | undefined> {
   if (!existsSync(TRANSCRIBER)) return undefined
   let path: string | undefined
+  let workDir: string | undefined
   try {
     path = await downloadAttachment(att, tmpdir())
+    const duration = await probeDurationSeconds(path)
+    if (duration !== undefined && duration > TRANSCRIBE_CHUNK_SECONDS) {
+      workDir = mkdtempSync(join(tmpdir(), 'discord-voice-'))
+      const chunks = await segmentAudio(path, workDir)
+      if (chunks.length > 1) {
+        const chunked = await transcribeChunks(chunks)
+        if (chunked) return chunked
+        return { failure: `transcription failed across all ${chunks.length} parts` }
+      }
+    }
     const raw = await runTranscriber(path)
     const m = TRANSCRIPT_LANG_RE.exec(raw)
     const text = safeTranscript(m ? raw.slice(m[0].length) : raw)
@@ -1194,6 +1319,13 @@ async function transcribeAttachment(att: Attachment): Promise<Transcription | un
         unlinkSync(path)
       } catch (err) {
         process.stderr.write(`discord channel: failed to remove ${path}: ${err}\n`)
+      }
+    }
+    if (workDir) {
+      try {
+        rmSync(workDir, { recursive: true, force: true })
+      } catch (err) {
+        process.stderr.write(`discord channel: failed to remove ${workDir}: ${err}\n`)
       }
     }
   }
@@ -2828,7 +2960,7 @@ async function handleInbound(msg: Message): Promise<void> {
     ? ''
     : 'text' in voice
       ? `[voice note: "${voice.text}"]`
-      : '[voice note: could not be transcribed]'
+      : `[voice note: could not be transcribed: ${voice.failure.replace(/[\[\]"\r\n]/g, ' ').trim()}]`
 
   // An app or webhook puts the whole message in an embed and leaves content
   // empty, so a channel that delivers without a mention hands the session a
