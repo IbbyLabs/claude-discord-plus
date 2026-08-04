@@ -48,11 +48,37 @@ import {
 } from 'discord.js'
 import { randomBytes } from 'crypto'
 import { spawn } from 'child_process'
-import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, unlinkSync } from 'fs'
+import { readFileSync, writeFileSync, appendFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, unlinkSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { join, sep } from 'path'
 
 const STATE_DIR = process.env.DISCORD_STATE_DIR ?? join(homedir(), '.claude', 'channels', 'discord')
+const ERROR_LOG = join(STATE_DIR, 'errors.log')
+const ERROR_LOG_MAX_BYTES = 256 * 1024
+
+/**
+ * Record a failure somewhere a person can read.
+ *
+ * A plugin-spawned server's stderr belongs to the harness that launched it, so
+ * no session can read it. The file sits next to gateway.state.
+ */
+function logError(context: string, err: unknown): void {
+  const line = `${new Date().toISOString()} ${context}: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`
+  process.stderr.write(line)
+  try {
+    mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 })
+    // Truncate rather than rotate; this is a breadcrumb trail, not an archive.
+    try {
+      if (statSync(ERROR_LOG).size > ERROR_LOG_MAX_BYTES) unlinkSync(ERROR_LOG)
+    } catch {
+      // No file yet, or it vanished under us.
+    }
+    appendFileSync(ERROR_LOG, line, { mode: 0o600 })
+  } catch {
+    // Logging must not break delivery.
+  }
+}
+
 const ACCESS_FILE = join(STATE_DIR, 'access.json')
 const APPROVED_DIR = join(STATE_DIR, 'approved')
 const ENV_FILE = join(STATE_DIR, '.env')
@@ -2824,7 +2850,7 @@ client.on('messageCreate', msg => {
   // that way, and dropping it left the session blind to the channels that
   // report what shipped.
   if (msg.author.id === client.user?.id) return
-  handleInbound(msg).catch(e => process.stderr.write(`discord: handleInbound failed: ${e}\n`))
+  handleInbound(msg).catch(e => logError(`handleInbound (chat ${msg.channelId}, msg ${msg.id})`, e))
 })
 
 /**
@@ -2905,7 +2931,7 @@ async function handleInbound(msg: Message): Promise<void> {
     // their message.
     if (mirror) {
       void mirrorDM(msg, mirror).catch(err => {
-        process.stderr.write(`discord channel: DM mirror to ${mirror} failed: ${err}\n`)
+        logError(`DM mirror to ${mirror}`, err)
       })
     }
   }

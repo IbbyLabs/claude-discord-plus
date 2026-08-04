@@ -130,6 +130,12 @@ The server writes `gateway.state` next to `access.json` every 20 seconds with th
 websocket status, ping and the time it last heard anything from Discord, so a
 watchdog can check whether it is actually receiving rather than merely connected.
 
+**Error log.** Failures are appended to `errors.log` next to `access.json`, in
+addition to stderr. The bridge's stderr belongs to whatever launched it, so a
+throw while handling an inbound message leaves no copy anyone can read, and a
+message that silently never arrives is indistinguishable from one nobody sent.
+The file is capped at 256 KB and truncated when it exceeds that.
+
 **Bot and webhook messages are delivered.** Upstream drops every message whose
 author is a bot, which hides the channels that report what shipped — releases,
 issues and commits all arrive by webhook. Only the bot's own messages are

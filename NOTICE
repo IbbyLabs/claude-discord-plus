@@ -141,5 +141,10 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     in order and control labels follow them; recursion is depth-capped.
   - Polls and stickers on an inbound message are rendered as [poll: question —
     answer (votes)] and [sticker: name]. Both leave content empty.
+  - Failures are appended to errors.log next to access.json as well as written to
+    stderr. The bridge runs with its stderr held by whatever launched it, so a
+    throw while handling an inbound message is unreadable from any session; a
+    file is the only copy either side can open. It is capped and truncated at
+    256 KB.
 
 Upstream carries no NOTICE file; this one exists to record the above.
