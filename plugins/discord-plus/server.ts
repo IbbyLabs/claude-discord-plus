@@ -2048,6 +2048,13 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const chunks = chunk(text, limit, mode)
         const sentIds: string[] = []
 
+        // Stop before the first chunk, not after the last. Discord has no cancel
+        // for a typing indicator — it simply lasts about ten seconds — so the only
+        // way one does not outlive the reply is for no pulse to be sent after it.
+        // Clearing in `finally` left the timer armed across the send, and a pulse
+        // firing in that window passed every guard and landed after the message.
+        stopTyping(chat_id)
+
         try {
           for (let i = 0; i < chunks.length; i++) {
             const shouldReplyTo =
@@ -2076,6 +2083,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           const msg = err instanceof Error ? err.message : String(err)
           throw new Error(`reply failed after ${sentIds.length} of ${chunks.length} chunk(s) sent: ${msg}`)
         } finally {
+          // Already stopped before the send; this covers a pulse re-armed by a
+          // concurrent inbound message while the chunks were going out.
           stopTyping(chat_id)
         }
 
