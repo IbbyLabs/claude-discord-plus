@@ -244,7 +244,9 @@ const MAX_DESCRIBED_EMOJI = 100
 
 // Discord holds a typing indicator for about ten seconds.
 const TYPING_REFRESH_MS = 8_000
-const TYPING_MAX_MS = 3 * 60_000
+// Long enough to read as seen-and-thinking, short enough not to promise a reply
+// that may not come. Three minutes of typing at someone is a claim, not a signal.
+const TYPING_MAX_MS = 20_000
 
 const REMINDERS_FILE = join(STATE_DIR, 'reminders.json')
 const REMINDER_TICK_MS = 60_000
@@ -782,6 +784,10 @@ async function pulseTyping(channelId: string): Promise<void> {
   try {
     const ch = client.channels.cache.get(channelId) ?? (await client.channels.fetch(channelId))
     if (!ch || !('sendTyping' in ch)) return stopTyping(channelId)
+    // The lookup above can await, so a reply may land while it is in flight.
+    // Without this the pulse still fires and Discord holds the indicator for its
+    // full ten seconds with nothing left to stop it.
+    if (!typingTimers.has(channelId)) return
     await ch.sendTyping()
   } catch (err) {
     process.stderr.write(`discord channel: typing in ${channelId} stopped: ${err}\n`)
