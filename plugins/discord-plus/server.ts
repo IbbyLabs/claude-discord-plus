@@ -268,10 +268,14 @@ const MAX_TRANSCRIPT_CHARS = 4000
 // still transcribes a short note in one pass.
 const FFPROBE = process.env.DISCORD_FFPROBE ?? 'ffprobe'
 const FFMPEG = process.env.DISCORD_FFMPEG ?? 'ffmpeg'
+// 20s rather than a length closer to the timeout: transcription runs at about
+// real time on a loaded box, so a 45s chunk finishes at ~50s against a 60s
+// limit and any spike drops it. A shorter chunk keeps the margin wide and costs
+// 20 seconds of speech when one is lost instead of 45.
 const TRANSCRIBE_CHUNK_SECONDS =
   Number(process.env.DISCORD_TRANSCRIBE_CHUNK_SECONDS) > 0
     ? Number(process.env.DISCORD_TRANSCRIBE_CHUNK_SECONDS)
-    : 45
+    : 20
 
 // reply's files param takes any path. .env is ~60 bytes and ships as an
 // upload. Claude can already Read+paste file contents, so this isn't a new
@@ -1280,9 +1284,12 @@ async function segmentAudio(path: string, workDir: string): Promise<string[]> {
 }
 
 // Transcribes each chunk in turn and joins the results. A chunk that fails
-// leaves a visible […] gap rather than dropping the note, so the first minute of
-// a long note survives a failure in the third. Returns undefined only when every
-// chunk failed, so the caller can report the note as unreadable.
+// leaves a named gap rather than dropping the note, so the first minute of a
+// long note survives a failure in the third. The marker says what happened:
+// an ellipsis is indistinguishable from someone pausing, and a reader who takes
+// it for a pause acts on a fragment as though it were the whole message.
+// Returns undefined only when every chunk failed, so the caller can report the
+// note as unreadable.
 async function transcribeChunks(chunks: string[]): Promise<{ text: string; language: string } | undefined> {
   const parts: string[] = []
   let language = ''
@@ -1301,7 +1308,7 @@ async function transcribeChunks(chunks: string[]): Promise<{ text: string; langu
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       process.stderr.write(`discord channel: transcription of a chunk failed: ${reason}\n`)
-      parts.push('[…]')
+      parts.push('[transcription failed]')
     }
   }
   if (!anyOk) return undefined

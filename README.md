@@ -235,9 +235,12 @@ when Discord marks the message with the voice-message flag. Only the first one
 is transcribed, so ten notes in a message do not hold delivery for minutes.
 
 A note too long to transcribe in one run is split with `ffmpeg` into
-`DISCORD_TRANSCRIBE_CHUNK_SECONDS` pieces (45 by default), each transcribed
-inside its own timeout and joined in order, so length is not a ceiling. A piece
-that fails leaves a `[…]` gap so the rest of the note still arrives, and a note
+`DISCORD_TRANSCRIBE_CHUNK_SECONDS` pieces (20 by default), each transcribed
+inside its own timeout and joined in order, so length is not a ceiling. The
+default is well under the timeout because transcription runs at roughly real
+time on a busy machine, and a piece that finishes near the limit is one spike
+away from being dropped. A piece that fails leaves a `[transcription failed]`
+gap so the rest of the note still arrives, and a note
 where every piece fails becomes `[voice note: could not be transcribed:
 <reason>]` with the reason carried through. Splitting needs `ffprobe`/`ffmpeg`
 on the path (overridable with `DISCORD_FFPROBE`/`DISCORD_FFMPEG`); without them a
