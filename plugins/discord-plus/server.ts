@@ -247,6 +247,10 @@ const TYPING_REFRESH_MS = 8_000
 // Long enough to read as seen-and-thinking, short enough not to promise a reply
 // that may not come. Three minutes of typing at someone is a claim, not a signal.
 const TYPING_MAX_MS = 20_000
+// Held before the first pulse: a turn that finishes inside this raises no
+// indicator, which is most of them. An indicator for a two-second reply is
+// theatre, and its tail outlives the reply it promised.
+const TYPING_LEAD_MS = 4_000
 
 const REMINDERS_FILE = join(STATE_DIR, 'reminders.json')
 const REMINDER_TICK_MS = 60_000
@@ -806,14 +810,25 @@ function startTyping(channelId: string): void {
     existing.until = until
     return
   }
-  const timer = setInterval(() => {
+  // A pulse lasts about ten seconds and Discord offers no way to cancel one, so
+  // a reply that lands quickly leaves an indicator running under a message that
+  // has already arrived. Holding the first pulse means a turn that finishes
+  // inside the lead raises no indicator at all. clearInterval accepts a timeout
+  // handle, so stopTyping needs no change.
+  const lead = setTimeout(() => {
     const entry = typingTimers.get(channelId)
     if (!entry || Date.now() >= entry.until) return stopTyping(channelId)
     void pulseTyping(channelId)
-  }, TYPING_REFRESH_MS)
-  timer.unref?.()
-  typingTimers.set(channelId, { timer, until })
-  void pulseTyping(channelId)
+    const timer = setInterval(() => {
+      const live = typingTimers.get(channelId)
+      if (!live || Date.now() >= live.until) return stopTyping(channelId)
+      void pulseTyping(channelId)
+    }, TYPING_REFRESH_MS)
+    timer.unref?.()
+    entry.timer = timer
+  }, TYPING_LEAD_MS)
+  lead.unref?.()
+  typingTimers.set(channelId, { timer: lead, until })
 }
 
 function buildPoll(spec: Record<string, unknown>): PollData {
@@ -2866,13 +2881,30 @@ client.on('interactionCreate', async (interaction: Interaction) => {
     .catch(() => {})
 })
 
+// One chain per channel, so messages reach the session in the order they were
+// sent. Handling is async and a voice note takes minutes to transcribe, so
+// without this a short message sent later overtakes a long one sent earlier and
+// the conversation arrives scrambled. Per channel rather than global: a slow
+// note in one place must not hold up another.
+const inboundChains = new Map<string, Promise<void>>()
+
 client.on('messageCreate', msg => {
   // Only this bot's own messages are skipped, to avoid answering itself. Other
   // apps and webhooks are content: release, issue and commit activity arrives
   // that way, and dropping it left the session blind to the channels that
   // report what shipped.
   if (msg.author.id === client.user?.id) return
-  handleInbound(msg).catch(e => logError(`handleInbound (chat ${msg.channelId}, msg ${msg.id})`, e))
+  const key = msg.channelId
+  const prior = inboundChains.get(key) ?? Promise.resolve()
+  const next = prior
+    .then(() => handleInbound(msg))
+    .catch(e => logError(`handleInbound (chat ${msg.channelId}, msg ${msg.id})`, e))
+  inboundChains.set(key, next)
+  // Drop the chain once it drains, or the map holds an entry per channel for
+  // the life of the process.
+  void next.then(() => {
+    if (inboundChains.get(key) === next) inboundChains.delete(key)
+  })
 })
 
 /**
