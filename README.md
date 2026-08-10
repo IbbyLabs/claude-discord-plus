@@ -181,6 +181,11 @@ resolution, link unfurls and pins. Voice reports joins, leaves and moves only,
 not mute, deafen or stream toggles. Reactions the bot adds itself are skipped, or
 the ack reaction would come straight back at it.
 
+A long voice note is split into chunks and all of them go to one transcriber
+process, so the model loads once rather than once per chunk. If a chunk stalls,
+the chunks already transcribed are kept and the note is marked as cut short
+rather than lost.
+
 Inbound messages are handled one at a time per channel, so what reaches the
 session is in the order it was sent. Transcribing a voice note takes much longer
 than relaying a short message, and without the ordering a later message arrives

@@ -52,6 +52,10 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     nickname changes, and voice joins, leaves and moves, one line each on the
     same notification channel as a message. Upstream connects with the message
     intents alone and sees none of it.
+  - A chunked voice note is transcribed in one helper process rather than one
+    per chunk, so the model is loaded once instead of once a chunk. The helper
+    flushes a line per chunk, and the bound scales with the chunk count, so a
+    stall keeps whatever finished before it and says the note was cut short.
   - Inbound messages are handled one at a time per channel, so they reach the
     session in the order they were sent. Handling is asynchronous and a voice
     note takes far longer to transcribe than a short message takes to arrive,

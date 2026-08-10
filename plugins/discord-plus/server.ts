@@ -1198,16 +1198,19 @@ function safeTranscript(text: string): string {
 // The transcriber prints `[en] text`.
 const TRANSCRIPT_LANG_RE = /^\[([a-zA-Z-]{2,8})\]\s*/
 
-function runTranscriber(path: string): Promise<string> {
+function runTranscriber(paths: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    const child = spawn(TRANSCRIBER, [path], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(TRANSCRIBER, paths, { stdio: ['ignore', 'pipe', 'pipe'] })
     let out = ''
     let err = ''
     let timedOut = false
+    // The budget is per chunk, so a longer note is allowed longer. One process
+    // for every chunk means a single bound covers all of them, and a flat one
+    // would either cut a long note short or let a stalled one hang forever.
     const timer = setTimeout(() => {
       timedOut = true
       child.kill('SIGKILL')
-    }, TRANSCRIBE_TIMEOUT_MS)
+    }, TRANSCRIBE_TIMEOUT_MS * Math.max(1, paths.length))
     child.stdout?.on('data', (d: Buffer) => {
       if (out.length < MAX_TRANSCRIPT_CHARS * 4) out += d.toString()
     })
@@ -1220,7 +1223,14 @@ function runTranscriber(path: string): Promise<string> {
     })
     child.on('close', code => {
       clearTimeout(timer)
-      if (timedOut) return reject(new Error(`timed out after ${TRANSCRIBE_TIMEOUT_MS}ms`))
+      if (timedOut) {
+        // The helper flushes a line per chunk, so a stall late in a note still
+        // leaves the earlier chunks on stdout. Losing them would make one bad
+        // chunk cost the whole note, which is what chunking exists to prevent.
+        const partial = out.trim()
+        if (partial) return resolve(partial)
+        return reject(new Error(`timed out after ${TRANSCRIBE_TIMEOUT_MS}ms`))
+      }
       if (code !== 0) return reject(new Error(err.trim() || `exit ${code}`))
       const text = out.trim()
       if (!text) return reject(new Error('empty transcript'))
@@ -1309,22 +1319,30 @@ async function transcribeChunks(chunks: string[]): Promise<{ text: string; langu
   const parts: string[] = []
   let language = ''
   let anyOk = false
-  for (const chunk of chunks) {
-    try {
-      const raw = await runTranscriber(chunk)
-      const m = TRANSCRIPT_LANG_RE.exec(raw)
-      if (!language && m) language = m[1].toLowerCase()
-      const text = m ? raw.slice(m[0].length) : raw
-      const trimmed = text.trim()
-      if (trimmed) {
-        parts.push(trimmed)
-        anyOk = true
-      }
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
-      process.stderr.write(`discord channel: transcription of a chunk failed: ${reason}\n`)
-      parts.push('[transcription failed]')
+  // One process for every chunk. Loading the model dominates a short chunk, and
+  // a note split into nine of them used to pay that load nine times.
+  let lines: string[] = []
+  try {
+    lines = (await runTranscriber(chunks)).split('\n')
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    process.stderr.write(`discord channel: transcription failed: ${reason}\n`)
+    return undefined
+  }
+  for (const raw of lines) {
+    const m = TRANSCRIPT_LANG_RE.exec(raw)
+    if (!language && m) language = m[1].toLowerCase()
+    const text = m ? raw.slice(m[0].length) : raw
+    const trimmed = text.trim()
+    if (trimmed) {
+      parts.push(trimmed)
+      anyOk = true
     }
+  }
+  // A stall kills the process partway, so fewer lines come back than chunks
+  // went in. Saying so beats letting the note read as complete.
+  if (lines.length < chunks.length) {
+    parts.push('[transcription cut short]')
   }
   if (!anyOk) return undefined
   const text = safeTranscript(parts.join(' '))
@@ -1357,7 +1375,7 @@ async function transcribeAttachment(att: Attachment): Promise<Transcription | un
         return { failure: `transcription failed across all ${chunks.length} parts` }
       }
     }
-    const raw = await runTranscriber(path)
+    const raw = await runTranscriber([path])
     const m = TRANSCRIPT_LANG_RE.exec(raw)
     const text = safeTranscript(m ? raw.slice(m[0].length) : raw)
     if (!text) return { failure: 'empty transcript' }
