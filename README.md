@@ -179,9 +179,15 @@ the text:
 Only content edits are relayed, because Discord fires the same event for embed
 resolution, link unfurls and pins. Voice reports joins, leaves and moves only,
 not mute, deafen or stream toggles. Reactions the bot adds itself are skipped, or
-the ack reaction would come straight back at it. Events relay from channels with
-an explicit `groups` entry, and member and voice events from any guild holding
-one.
+the ack reaction would come straight back at it.
+
+Events follow the channel's delivery mode, the same as its messages. A channel
+that delivers everything relays every event. A mention-only channel relays a
+reaction on one of the session's own messages, which is how an answer gets
+acknowledged without typing, and nothing else — a reaction on a stranger's
+message there is a wake-up carrying nothing to act on. A channel with no
+explicit `groups` entry relays nothing. Member and voice events come from any
+guild holding an entry.
 
 **`list_members`.** Members of a guild with their status, roles and nickname,
 filterable by `status` or `role`. Presence is deliberately pull-only: the

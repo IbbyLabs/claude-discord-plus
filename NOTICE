@@ -52,6 +52,10 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     nickname changes, and voice joins, leaves and moves, one line each on the
     same notification channel as a message. Upstream connects with the message
     intents alone and sees none of it.
+  - Those relays follow the channel's delivery mode rather than its membership
+    alone. A channel that delivers every message keeps every event; a
+    mention-only channel relays a reaction on the session's own message and
+    nothing else; a channel with no groups entry relays nothing, as before.
   - Added list_members, listing a guild's members with presence, roles and
     nickname. The GuildPresences intent is enabled to populate it; presenceUpdate
     is never relayed, since it fires on every status flicker of every member.

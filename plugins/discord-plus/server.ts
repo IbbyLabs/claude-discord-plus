@@ -3129,7 +3129,24 @@ function relayEvent(event: string, content: string, meta: Record<string, string>
  * and from a DM with an allowlisted sender. defaultPolicy covers mentions only:
  * a channel nobody opted in should not narrate every reaction in it.
  */
-async function ambientChannelAllowed(channelId: string): Promise<boolean> {
+/**
+ * How much of a channel's ambient traffic reaches the session. `all` is every
+ * reaction, edit and deletion; `own` is only what concerns the session itself;
+ * `none` relays nothing.
+ */
+type AmbientReach = 'none' | 'own' | 'all'
+
+/**
+ * Ambient events follow the channel's delivery mode, the same as its messages.
+ * A channel that delivers everything keeps every event. A mention-only channel
+ * relays only what concerns the session, because a reaction on a stranger's
+ * message there is a wake-up carrying nothing to act on.
+ *
+ * Membership is still required: a channel with no groups entry relays nothing,
+ * which `channelPolicy` alone would not preserve — it falls back to a
+ * mention-only default for anything unconfigured.
+ */
+async function ambientChannelReach(channelId: string): Promise<AmbientReach> {
   const access = loadAccess()
   // A thread outside the cache resolves to no parent, which reads as a channel
   // with no groups entry. Whether it is cached varies with what the gateway has
@@ -3138,9 +3155,10 @@ async function ambientChannelAllowed(channelId: string): Promise<boolean> {
   const { channel, key } = await policyKeyFor(channelId)
   if (channel?.type === ChannelType.DM) {
     const userId = channel.recipientId ?? dmChannelUsers.get(channelId)
-    return !!userId && access.allowFrom.includes(userId)
+    return !!userId && access.allowFrom.includes(userId) ? 'all' : 'none'
   }
-  return key in access.groups
+  if (!(key in access.groups)) return 'none'
+  return access.groups[key]?.requireMention ? 'own' : 'all'
 }
 
 /** Member and voice events belong to a guild, not a channel. */
@@ -3185,7 +3203,8 @@ async function relayReaction(
   }
 
   const raw = reaction.message
-  if (!(await ambientChannelAllowed(raw.channelId))) return
+  const reach = await ambientChannelReach(raw.channelId)
+  if (reach === 'none') return
 
   // A reaction on anything older than the message cache arrives partial.
   const target = raw.partial
@@ -3194,6 +3213,13 @@ async function relayReaction(
         return null
       })
     : raw
+
+  // On a mention-only channel a reaction is relayed only when it is on one of
+  // our own messages: that is how someone acknowledges an answer without
+  // typing. A reaction on a stranger's message there carries nothing to act on.
+  // An unresolvable target is treated as not ours rather than relayed on the
+  // chance that it might be.
+  if (reach === 'own' && target?.author?.id !== client.user?.id) return
 
   const who = user.username ?? user.id
   const emoji = reaction.emoji.name ?? reaction.emoji.toString()
@@ -3239,7 +3265,7 @@ async function relayEdit(
   // nothing a reader could act on. Dashboards that refresh their own embed on a
   // timer would otherwise wake the session for every tick.
   if (before === null && !fresh.content) return
-  if (!(await ambientChannelAllowed(fresh.channelId))) return
+  if ((await ambientChannelReach(fresh.channelId)) !== 'all') return
 
   const who = fresh.author?.username ?? '?'
   const after = messageExcerpt(fresh)
@@ -3265,7 +3291,7 @@ async function relayDelete(msg: Message | PartialMessage): Promise<void> {
   forgetDownloads(msg.id)
   const known = msg.partial ? null : msg
   if (known?.author?.id === client.user?.id) return
-  if (!(await ambientChannelAllowed(msg.channelId))) return
+  if ((await ambientChannelReach(msg.channelId)) !== 'all') return
 
   const who = known?.author?.username
   const body = known ? messageExcerpt(known) : ''
