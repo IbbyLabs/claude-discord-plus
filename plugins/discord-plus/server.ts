@@ -420,6 +420,50 @@ const RECENT_SENT_CAP = 200
 
 const dmChannelUsers = new Map<string, string>()
 
+const DELIVERY_LOG = join(STATE_DIR, 'delivery.log')
+const DELIVERY_LOG_MAX_BYTES = 256 * 1024
+
+/**
+ * Record that a message left this process, so "did it send" is answerable
+ * after the fact. The MCP result is returned to the caller and then gone; a
+ * message that failed to render, or was deleted, leaves nothing else behind.
+ */
+function noteDelivery(channelId: string, messageId: string, detail: string): void {
+  try {
+    mkdirSync(STATE_DIR, { recursive: true })
+    try {
+      if (statSync(DELIVERY_LOG).size > DELIVERY_LOG_MAX_BYTES) {
+        rmSync(DELIVERY_LOG, { force: true })
+      }
+    } catch {
+      // No log yet, or it vanished under us. Either way the append creates one.
+    }
+    appendFileSync(DELIVERY_LOG, `${new Date().toISOString()} ${channelId} ${messageId} ${detail}\n`)
+  } catch {
+    // A delivery log that cannot be written must never stop a delivery.
+  }
+}
+
+// How long the gateway may be silent before a send is worth qualifying. Any
+// inbound traffic resets it, so a quiet guild does not trip this — only a
+// connection that has stopped receiving.
+const GATEWAY_SILENCE_WARN_MS = 15 * 60 * 1000
+
+/**
+ * A note about the connection when it looks unhealthy, and an empty string when
+ * it does not. A disconnected gateway makes send() throw, which is loud; the
+ * case worth reporting is a socket that is still up and has heard nothing,
+ * because that sends without error and delivers to a session nobody is reading.
+ */
+function gatewayHealthNote(): string {
+  if (!client.isReady()) return 'WARNING: the gateway is not ready — this may not have been delivered'
+  const silentMs = Date.now() - lastEventAt
+  if (silentMs > GATEWAY_SILENCE_WARN_MS) {
+    return `WARNING: no gateway traffic for ${Math.round(silentMs / 60000)} minutes — the connection may be stale`
+  }
+  return ''
+}
+
 function noteSent(id: string): void {
   recentSentIds.add(id)
   if (recentSentIds.size > RECENT_SENT_CAP) {
@@ -2087,6 +2131,9 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         const replyMode = access.replyToMode ?? 'first'
         const chunks = chunk(text, limit, mode)
         const sentIds: string[] = []
+        const echoedMentions = new Set<string>()
+        let echoedAttachments = 0
+        let echoedEmbeds = 0
 
         // Stop before the first chunk, not after the last. Discord has no cancel
         // for a typing indicator — it simply lasts about ten seconds — so the only
@@ -2118,6 +2165,18 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
             })
             noteSent(sent.id)
             sentIds.push(sent.id)
+            // What Discord stored, not what was sent. Re-serialising the
+            // outgoing payload would agree with the sender every time; only the
+            // echo can disagree, which is the whole point of reporting it.
+            for (const id of sent.mentions?.users?.keys() ?? []) echoedMentions.add(id)
+            for (const id of sent.mentions?.roles?.keys() ?? []) echoedMentions.add(`role:${id}`)
+            echoedAttachments += sent.attachments?.size ?? 0
+            echoedEmbeds += sent.embeds?.length ?? 0
+            noteDelivery(
+              chat_id,
+              sent.id,
+              `chunk=${i + 1}/${chunks.length} mentions=${sent.mentions?.users?.size ?? 0} files=${sent.attachments?.size ?? 0}`,
+            )
           }
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
@@ -2128,11 +2187,23 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           stopTyping(chat_id)
         }
 
-        const result =
+        const base =
           sentIds.length === 1
             ? `sent (id: ${sentIds[0]})`
             : `sent ${sentIds.length} parts (ids: ${sentIds.join(', ')})`
-        return { content: [{ type: 'text', text: result }] }
+        // A bare @name that resolved nobody is indistinguishable from an
+        // ordinary message here — both echo an empty list — so the text is
+        // checked for a mention shape and only then is the mismatch reported.
+        const looksLikeMention = /(^|\s)@[A-Za-z0-9._-]{2,}/.test(text)
+        const parts = [base, `mentions: ${echoedMentions.size === 0 ? 'none' : [...echoedMentions].join(', ')}`]
+        if (echoedAttachments > 0) parts.push(`attachments: ${echoedAttachments}`)
+        if (echoedEmbeds > 0) parts.push(`embeds: ${echoedEmbeds}`)
+        const health = gatewayHealthNote()
+        if (health) parts.push(health)
+        if (looksLikeMention && echoedMentions.size === 0) {
+          parts.push('WARNING: the text looks like it mentions someone and Discord resolved nobody — it will render as plain grey text and ping no one')
+        }
+        return { content: [{ type: 'text', text: parts.join('\n') }] }
       }
       case 'fetch_messages': {
         const target = args.channel as string

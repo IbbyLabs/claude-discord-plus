@@ -458,6 +458,28 @@ and the name of a sticker sent on its own:
 [sticker: thumbs up]
 ```
 
+**`reply` reports what Discord stored.** The resolved mentions, and the
+attachment and embed counts, read back off the message Discord created rather
+than off the payload that was sent:
+
+```
+sent (id: 1536867615849451610)
+mentions: 233639801088114690
+```
+
+A bare `@name` that matched nobody renders as grey text and pings no one, and
+the sender cannot see that from their own side. Only the echo can disagree with
+the sender, so a mention shape in the text with nothing resolved adds a warning.
+The same result carries a note when the gateway is not ready, or has heard no
+inbound traffic for fifteen minutes — a socket that is up and silent sends
+without error.
+
+**A delivery log.** Every message that leaves the bridge is appended to
+`delivery.log` beside `errors.log`, with the channel, the message id, the chunk
+number and what resolved. An MCP result is returned once and then gone, so a
+message that rendered wrongly or was later deleted otherwise leaves nothing
+behind. Capped and truncated at 256 KB.
+
 ## Relationship to upstream
 
 Forked from `cf99fc252a44e3f36763abe1db8744757f1b0297`, plugin version 0.0.4. Modifications are listed in
