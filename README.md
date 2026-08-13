@@ -333,6 +333,12 @@ people's answers and holds no opinion of its own.
 It rides on `reply` rather than being its own tool: a poll is a message with a
 question attached, and every tool's schema is paid for on every turn.
 
+Sending one also schedules a reminder at its expiry, so the result gets posted
+when the poll closes instead of whenever somebody next goes looking. Discord
+says nothing when a poll ends, and the reminder store already survives a restart
+and fires late, so it needed no new machinery. The reply says when the poll
+closes and which reminder is holding it.
+
 **Message links.** People paste `https://discord.com/channels/…` constantly, and
 the bridge could do nothing with one. `fetch_messages` now takes a link anywhere
 it takes a channel:

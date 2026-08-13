@@ -2187,6 +2187,30 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
           stopTyping(chat_id)
         }
 
+        // A poll closes on its own and Discord says nothing when it does, so the
+        // result sits unread until somebody goes looking. The reminder store
+        // already survives a restart and fires late, so scheduling one at expiry
+        // is the whole feature.
+        let pollNote = ''
+        if (poll && sentIds.length > 0) {
+          const dueAt = Date.now() + poll.duration * 60 * 60 * 1000
+          const all = readReminders()
+          if (all.length >= MAX_REMINDERS) {
+            pollNote = `\npoll closes ${new Date(dueAt).toISOString()} — no reminder set, the store is full`
+          } else {
+            const id = `r-${randomBytes(4).toString('hex')}`
+            all.push({
+              id,
+              channelId: chat_id,
+              note: `The poll you sent has closed: https://discord.com/channels/${'guildId' in ch ? ch.guildId : '@me'}/${chat_id}/${sentIds[0]} — post the result.`,
+              dueAt,
+              createdAt: Date.now(),
+            })
+            writeReminders(all)
+            pollNote = `\npoll closes ${new Date(dueAt).toISOString()}, reminder ${id} set`
+          }
+        }
+
         const base =
           sentIds.length === 1
             ? `sent (id: ${sentIds[0]})`
@@ -2203,6 +2227,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         if (looksLikeMention && echoedMentions.size === 0) {
           parts.push('WARNING: the text looks like it mentions someone and Discord resolved nobody — it will render as plain grey text and ping no one')
         }
+        if (pollNote) parts.push(pollNote.trim())
         return { content: [{ type: 'text', text: parts.join('\n') }] }
       }
       case 'fetch_messages': {
