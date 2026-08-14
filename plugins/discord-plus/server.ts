@@ -993,6 +993,11 @@ type Reminder = {
   dueAt: number
   createdAt: number
   attempts?: number
+  // sessionOnly nudges are delivered to this session and never posted. They
+  // exist to prompt the session itself, so a channel message is noise to
+  // everyone who can see it. A `remind` a person sets is the opposite: the
+  // channel message is the whole point, so it keeps posting.
+  sessionOnly?: boolean
 }
 
 function isReminder(v: unknown): v is Reminder {
@@ -1142,8 +1147,25 @@ async function fireDueReminders(): Promise<void> {
       try {
         const ch = await fetchAllowedChannel(r.channelId)
         if (!('send' in ch)) throw new Error('channel is not sendable')
-        const sent = await ch.send(`⏰ Reminder: ${r.note}`)
-        noteSent(sent.id)
+        const text = `⏰ Reminder: ${r.note}`
+        // Posting is not delivering: this bot's own messages never come back
+        // through messageCreate, so a nudge posted to a channel reaches the
+        // session it was for only if someone goes and looks. Relay it instead.
+        //
+        // Falling back to a post when the relay fails is what makes silence
+        // mean something: nothing in the channel is then a positive statement
+        // that it arrived, rather than the two cases being indistinguishable.
+        let delivered = false
+        if (r.sessionOnly) {
+          delivered = await relayEventDelivered('reminder', text, {
+            chat_id: r.channelId,
+            reminder_id: r.id,
+          })
+        }
+        if (!delivered) {
+          const sent = await ch.send(text)
+          noteSent(sent.id)
+        }
       } catch (err) {
         const attempts = (r.attempts ?? 0) + 1
         process.stderr.write(
@@ -2201,6 +2223,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
             const id = `r-${randomBytes(4).toString('hex')}`
             all.push({
               id,
+              sessionOnly: true,
               channelId: chat_id,
               note: `The poll you sent has closed: https://discord.com/channels/${'guildId' in ch ? ch.guildId : '@me'}/${chat_id}/${sentIds[0]} — post the result.`,
               dueAt,
@@ -3257,6 +3280,31 @@ function excerpt(text: string, limit = EVENT_EXCERPT_CHARS): string {
 
 function messageExcerpt(m: Message | PartialMessage): string {
   return excerpt(messageBody(m))
+}
+
+/**
+ * Like relayEvent, but reports whether the notification left. A caller that has
+ * a fallback needs to know; one that does not should use relayEvent.
+ *
+ * A resolved promise means the transport accepted it, not that the session read
+ * it. That is the strongest signal available here, and it separates a bridge
+ * that is not listening from one that is.
+ */
+async function relayEventDelivered(
+  event: string,
+  content: string,
+  meta: Record<string, string>,
+): Promise<boolean> {
+  try {
+    await mcp.notification({
+      method: 'notifications/claude/channel',
+      params: { content, meta: { event, ts: new Date().toISOString(), ...meta } },
+    })
+    return true
+  } catch (err) {
+    process.stderr.write(`discord channel: failed to deliver ${event}, posting instead: ${err}\n`)
+    return false
+  }
 }
 
 function relayEvent(event: string, content: string, meta: Record<string, string>): void {

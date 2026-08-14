@@ -339,6 +339,12 @@ says nothing when a poll ends, and the reminder store already survives a restart
 and fires late, so it needed no new machinery. The reply says when the poll
 closes and which reminder is holding it.
 
+That nudge is delivered into the session rather than posted to the channel. It
+is sent as the bot, and a bot's own messages never come back through
+`messageCreate`, so a posted one reached nobody while cluttering the channel for
+everybody. If delivery fails it posts after all, which is what lets an empty
+channel mean it arrived rather than meaning nothing.
+
 **Message links.** People paste `https://discord.com/channels/…` constantly, and
 the bridge could do nothing with one. `fetch_messages` now takes a link anywhere
 it takes a channel:
@@ -366,7 +372,9 @@ clears it, and shutdown clears them all, so the worst case is a channel that
 types for ten minutes and then stops itself.
 
 **Reminders.** Discord has no reminder feature, so `remind` is one: a due time, a
-channel and a note, posted when it comes due.
+channel and a note, posted when it comes due. A reminder set this way always
+posts: it exists for a person to read. Only the automatic poll-close nudge, whose
+sole reader is the session, is delivered instead.
 
 ```json
 { "action": "create", "chat_id": "…", "when": "friday 9am", "note": "chase the release PR" }

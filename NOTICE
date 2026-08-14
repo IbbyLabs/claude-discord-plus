@@ -110,7 +110,12 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     2 to 10 answers, a duration in hours and a multiselect flag. Counts, lengths
     and duration are checked before the send, so a bad poll says what is wrong
     rather than returning a Discord 400. Sending one schedules a reminder at the
-    poll's expiry, since Discord reports nothing when a poll closes.
+    poll's expiry, since Discord reports nothing when a poll closes. That
+    reminder is delivered into the session rather than posted: it is sent as the
+    bot, and a bot's own messages never return through messageCreate, so a
+    posted one reached nobody. It falls back to posting if delivery fails, which
+    is what makes an empty channel mean it arrived. A remind a person sets is
+    unchanged and still posts.
   - fetch_messages accepts a message link (https://discord.com/channels/…)
     wherever it takes a channel, returning the linked message with the
     conversation either side of it. A link resolves to ids and then goes through
