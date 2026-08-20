@@ -81,7 +81,8 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
   - Added dmPolicy "guild", accepting a DM from anyone who shares a guild with
     the bot, and dmMirrorChannelId, which copies every accepted DM to a channel.
     dmMirrorExclude lists user IDs whose DMs are never copied, so the operator's
-    own messages do not become durable posts in that channel.
+    own messages do not become durable posts in that channel. readAccessFile
+    copies it, without which the field parses and is then discarded.
   - gateway.state carries the writing process's pid. Several bridges can hold a
     gateway on one token, and a reader cannot otherwise tell whose heartbeat it
     is looking at.

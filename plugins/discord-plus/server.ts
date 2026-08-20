@@ -343,6 +343,7 @@ function readAccessFile(): Access {
       dmPolicy: parsed.dmPolicy ?? 'pairing',
       allowFrom: parsed.allowFrom ?? [],
       dmMirrorChannelId: parsed.dmMirrorChannelId,
+      dmMirrorExclude: parsed.dmMirrorExclude,
       groups: parsed.groups ?? {},
       defaultPolicy: parsed.defaultPolicy,
       pending: parsed.pending ?? {},
