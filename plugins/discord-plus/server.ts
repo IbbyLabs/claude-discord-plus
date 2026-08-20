@@ -782,6 +782,18 @@ async function fetchTextChannel(id: string) {
 // from. DM channel ID ≠ user ID, so we inspect the fetched channel's type.
 // Thread → parent lookup mirrors the inbound gate, and so does defaultPolicy:
 // a mention that arrives from an unlisted channel has to be answerable there.
+// Read tools take `channel` and every write tool takes `chat_id`, so a caller
+// that learned one convention sends the other. Discord answers a missing id with
+// "Value \"undefined\" is not snowflake", which names neither the tool nor the
+// parameter. Accept both and say what is missing.
+function channelArg(args: Record<string, unknown>, tool: string): string {
+  const value = args.channel ?? args.chat_id
+  if (typeof value !== 'string' || !value.trim()) {
+    throw new Error(`${tool} needs a channel id. Pass channel (chat_id is accepted).`)
+  }
+  return value.trim()
+}
+
 async function fetchAllowedChannel(id: string) {
   const ch = await fetchTextChannel(id)
   const access = loadAccess()
@@ -1676,8 +1688,9 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             description: 'Message id to read backwards from, to continue past an earlier call.',
           },
+          chat_id: { type: 'string', description: 'Accepted in place of channel.' },
         },
-        required: ['channel'],
+        required: [],
       },
     },
     {
@@ -1712,8 +1725,8 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
         "List a forum channel's available tags with their ids, so set_thread_tags can be called by name or id. Pass the forum channel, or a thread inside it.",
       inputSchema: {
         type: 'object',
-        properties: { channel: { type: 'string' } },
-        required: ['channel'],
+        properties: { channel: { type: 'string' }, chat_id: { type: 'string', description: 'Accepted in place of channel.' } },
+        required: [],
       },
     },
     {
@@ -1732,8 +1745,9 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'number',
             description: 'Max threads to return (default 50, max 200).',
           },
+          chat_id: { type: 'string', description: 'Accepted in place of channel.' },
         },
-        required: ['channel'],
+        required: [],
       },
     },
     {
@@ -1842,8 +1856,9 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
           sort_by: { type: 'string', description: 'timestamp (default) or relevance.' },
           limit: { type: 'number', description: `Max results (default ${SEARCH_PAGE}, max ${MAX_SEARCH_RESULTS}). Anything over ${SEARCH_PAGE} is paged.` },
           offset: { type: 'number', description: 'Results to skip, to continue past an earlier call.' },
+          chat_id: { type: 'string', description: 'Accepted in place of channel.' },
         },
-        required: ['channel'],
+        required: [],
       },
     },
     {
@@ -1869,8 +1884,9 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'number',
             description: 'Max members to return (default 50, max 200).',
           },
+          chat_id: { type: 'string', description: 'Accepted in place of channel.' },
         },
-        required: ['channel'],
+        required: [],
       },
     },
     {
@@ -1884,8 +1900,9 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: 'string',
             description: 'Any allowlisted channel in the guild to describe.',
           },
+          chat_id: { type: 'string', description: 'Accepted in place of channel.' },
         },
-        required: ['channel'],
+        required: [],
       },
     },
     {
@@ -2254,7 +2271,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text: parts.join('\n') }] }
       }
       case 'fetch_messages': {
-        const target = args.channel as string
+        const target = channelArg(args, 'fetch_messages')
         const link = parseMessageLink(target)
         const ch = await fetchAllowedChannel(link?.channelId ?? target)
         // Discord caps a single fetch at 100 regardless of what is asked, so a
@@ -2320,7 +2337,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text: pin ? 'pinned' : 'unpinned' }] }
       }
       case 'list_forum_tags': {
-        const forum = await fetchAllowedForum(args.channel as string)
+        const forum = await fetchAllowedForum(channelArg(args, 'list_forum_tags'))
         const tags = (forum as any)?.availableTags
         if (!Array.isArray(tags)) {
           throw new Error('that channel is not a forum, so it has no tags')
@@ -2332,7 +2349,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text }] }
       }
       case 'list_forum_threads': {
-        const forum = await fetchAllowedForum(args.channel as string)
+        const forum = await fetchAllowedForum(channelArg(args, 'list_forum_threads'))
         const tagNames = new Map<string, string>()
         for (const t of ((forum as any).availableTags ?? []) as Array<{ id: string; name: string }>) {
           tagNames.set(t.id, t.name)
@@ -2566,7 +2583,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
       }
       case 'search_messages': {
-        const ch = await fetchAllowedChannel(args.channel as string)
+        const ch = await fetchAllowedChannel(channelArg(args, 'search_messages'))
         if (ch.isDMBased()) throw new Error('search needs a guild channel, not a DM')
         const guildId = ch.guildId
         // A named channel is searched only when it is allowlisted in its own
@@ -2681,7 +2698,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         return { content: [{ type: 'text', text: lines.join('\n') + more }] }
       }
       case 'list_members': {
-        const ch = await fetchAllowedChannel(args.channel as string)
+        const ch = await fetchAllowedChannel(channelArg(args, 'list_members'))
         if (ch.isDMBased()) throw new Error('list_members needs a guild channel, not a DM')
         const guild = ch.guild
 
@@ -2770,7 +2787,7 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
         }
       }
       case 'describe_server': {
-        const ch = await fetchAllowedChannel(args.channel as string)
+        const ch = await fetchAllowedChannel(channelArg(args, 'describe_server'))
         if (ch.isDMBased()) throw new Error('describe_server needs a guild channel, not a DM')
         return { content: [{ type: 'text', text: await describeGuild(ch.guild) }] }
       }

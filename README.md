@@ -115,6 +115,12 @@ and attachments as Discord renders them. Escalating by retyping the report loses
 exactly the screenshot the report was about. A forward carries no text of its
 own, so an optional note is posted first as its own message.
 
+**Read tools take `chat_id` too.** Every write tool names the channel `chat_id`
+and the read tools name it `channel`, so a caller that learned one convention
+sends the other. Both are accepted, and a call with neither says which parameter
+is missing — Discord's own answer is `Value "undefined" is not snowflake`, which
+names neither the tool nor the argument.
+
 **`fetch_messages` pages.** Discord caps a single request at 100 and rejects
 anything higher, so a longer thread is read by walking back from the oldest id
 returned. `limit` goes to 1000, and `before` continues from an earlier call.

@@ -10,6 +10,11 @@ Derived from upstream commit cf99fc252a44e3f36763abe1db8744757f1b0297
 
 Modifications by IbbyLabs, per Apache-2.0 section 4(b):
 
+  - The read tools (fetch_messages, search_messages, list_forum_threads,
+    list_forum_tags, list_members, describe_server) accept chat_id in place of
+    channel, and name the missing parameter themselves when neither is given.
+    Discord answers a missing id with "not snowflake", which names neither the
+    tool nor the argument.
   - Added search_messages, wrapping GET /guilds/{guild.id}/messages/search. The
     channel allowlist goes into the query as a multi-valued channel_id filter, so
     search cannot reach further than fetch_messages. Discord returns 25 results
