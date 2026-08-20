@@ -3618,6 +3618,11 @@ function writeGatewayState(): void {
         lastEventAt,
         writtenAt: Date.now(),
         user: client.user?.tag ?? null,
+        // Several bridges can hold a gateway on one token at once. Without a
+        // writer, a reader cannot tell a fresh connection's heartbeat from an
+        // older process's, and a check keyed on freshness alone is satisfied
+        // by whichever one is still running.
+        pid: process.pid,
       }) + '\n',
       { mode: 0o600 },
     )
