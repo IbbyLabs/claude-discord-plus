@@ -176,6 +176,12 @@ type Access = {
   allowFrom: string[]
   /** Channel every accepted DM is copied to. Unset means no mirroring. */
   dmMirrorChannelId?: string
+  /**
+   * User IDs whose DMs are never mirrored. The mirror exists to show what
+   * strangers send the bot; copying the operator's own DMs into a channel turns
+   * anything they paste, credentials included, into a durable message.
+   */
+  dmMirrorExclude?: string[]
   /** Keyed on channel ID (snowflake), not guild ID. One entry per guild channel. */
   groups: Record<string, GroupPolicy>
   /**
@@ -3135,9 +3141,10 @@ async function handleInbound(msg: Message): Promise<void> {
   if (isDM) {
     dmChannelUsers.set(chat_id, msg.author.id)
     const mirror = result.access.dmMirrorChannelId
+    const mirrorExcluded = (result.access.dmMirrorExclude ?? []).includes(msg.author.id)
     // Fire and forget: a mirror that cannot be written must not cost the user
     // their message.
-    if (mirror) {
+    if (mirror && !mirrorExcluded) {
       void mirrorDM(msg, mirror).catch(err => {
         logError(`DM mirror to ${mirror}`, err)
       })

@@ -80,6 +80,8 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     any channel the bot can see; null restores upstream's drop-unless-listed.
   - Added dmPolicy "guild", accepting a DM from anyone who shares a guild with
     the bot, and dmMirrorChannelId, which copies every accepted DM to a channel.
+    dmMirrorExclude lists user IDs whose DMs are never copied, so the operator's
+    own messages do not become durable posts in that channel.
     The inbound envelope marks a DM with is_dm.
   - Inbound voice notes are transcribed and the text is appended to the message
     content as [voice note: "…"], with transcript in the envelope meta. Upstream
