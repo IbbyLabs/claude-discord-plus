@@ -1897,6 +1897,21 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: 'open_dm',
+      description:
+        "Open a DM channel with a guild member and return its id, so a conversation can be started rather than only answered. reply and the other channel tools take that id like any other. Discord refuses a DM between bots, so this only reaches people.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          user_id: {
+            type: 'string',
+            description: "The member's user id. list_members reports it.",
+          },
+        },
+        required: ['user_id'],
+      },
+    },
+    {
       name: 'describe_server',
       description:
         "The guild's shape: every channel and category with its id and type (forums marked as such), every role with its id, position and colour, the custom emoji react can use, the member count and the guild name. Nothing else lists what exists, so call this before guessing a channel id or asking someone for one. Pass any allowlisted channel in the guild. Cheap to call — the answer is cached for a few minutes.",
@@ -2704,6 +2719,24 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
             : ''
         return { content: [{ type: 'text', text: lines.join('\n') + more }] }
       }
+      case 'open_dm': {
+        const userId = String((args as Record<string, unknown>).user_id ?? '').trim()
+        if (!/^\d+$/.test(userId)) throw new Error('open_dm needs a numeric user id')
+        const user = await client.users.fetch(userId)
+        // Discord refuses this at channel creation with 50007, before any message
+        // exists, so name the reason rather than surfacing that.
+        if (user.bot) throw new Error(`${user.username} is a bot; Discord does not allow a DM between bots`)
+        const dm = await user.createDM()
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({ chat_id: dm.id, user: user.username, user_id: user.id }),
+            },
+          ],
+        }
+      }
+
       case 'list_members': {
         const ch = await fetchAllowedChannel(channelArg(args, 'list_members'))
         if (ch.isDMBased()) throw new Error('list_members needs a guild channel, not a DM')

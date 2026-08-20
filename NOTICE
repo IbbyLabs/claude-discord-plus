@@ -75,6 +75,10 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
   - Added list_members, listing a guild's members with presence, roles and
     nickname. The GuildPresences intent is enabled to populate it; presenceUpdate
     is never relayed, since it fires on every status flicker of every member.
+  - Added open_dm, opening a DM channel with a member and returning its id, so a
+    conversation can be started rather than only answered. Upstream's reply takes
+    a channel id and nothing creates one, so a member who has not written first
+    is unreachable. Refuses a bot target, which Discord rejects with 50007.
   - Added defaultPolicy, the access policy for guild channels with no groups
     entry. It defaults to requireMention, so a mention reaches the session from
     any channel the bot can see; null restores upstream's drop-unless-listed.
