@@ -3638,6 +3638,17 @@ client.on('voiceStateUpdate', (oldState: VoiceState, newState: VoiceState) => {
 // READY and when it last actually heard from Discord — so a supervisor can tell
 // deaf from idle without opening a second connection of its own.
 const GATEWAY_STATE_FILE = join(STATE_DIR, 'gateway.state')
+
+// The version that wrote the state, so a reader can tell which build is holding
+// the gateway. A process's command line carries it only when it runs from the
+// plugin cache; one started from a checkout does not.
+const PLUGIN_VERSION: string = (() => {
+  try {
+    return JSON.parse(readFileSync(new URL('package.json', import.meta.url), 'utf8')).version ?? ''
+  } catch {
+    return ''
+  }
+})()
 let lastEventAt = Date.now()
 
 function writeGatewayState(): void {
@@ -3657,6 +3668,7 @@ function writeGatewayState(): void {
         // older process's, and a check keyed on freshness alone is satisfied
         // by whichever one is still running.
         pid: process.pid,
+        version: PLUGIN_VERSION,
       }) + '\n',
       { mode: 0o600 },
     )
