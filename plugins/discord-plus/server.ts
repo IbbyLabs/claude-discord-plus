@@ -46,7 +46,8 @@ import {
   type Guild,
   type PollData,
 } from 'discord.js'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
+import { createServer, connect as netConnect, type Server as NetServer } from 'net'
 import { spawn } from 'child_process'
 import { readFileSync, writeFileSync, appendFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, renameSync, realpathSync, chmodSync, existsSync, unlinkSync } from 'fs'
 import { homedir, tmpdir } from 'os'
@@ -106,6 +107,63 @@ if (!TOKEN) {
   process.exit(1)
 }
 const INBOX_DIR = join(STATE_DIR, 'inbox')
+
+// One gateway per bot token. A second on the same credential receives every
+// event a second time and can post as the same account.
+const GATEWAY_LOCK_DIR = join(homedir(), '.claude', 'channels', '.gateway-locks')
+const GATEWAY_LOCK_PATH = join(
+  GATEWAY_LOCK_DIR,
+  `${createHash('sha256').update(TOKEN).digest('hex').slice(0, 16)}.sock`,
+)
+// Held open for the process lifetime. Node opens it close-on-exec, so a spawned
+// ffmpeg, transcriber or Claude session never carries the claim.
+let gatewayLock: NetServer | undefined
+
+function listenOnce(path: string): Promise<NetServer> {
+  return new Promise((resolve, reject) => {
+    const server = createServer()
+    server.once('error', reject)
+    server.listen(path, () => {
+      server.removeAllListeners('error')
+      server.unref()
+      resolve(server)
+    })
+  })
+}
+
+// A socket answers only while its process is alive, so a leftover file is told
+// from a live holder by connecting to it rather than by trusting a pid.
+function holderAnswers(path: string): Promise<boolean> {
+  return new Promise(resolve => {
+    const probe = netConnect(path)
+    const done = (alive: boolean) => { probe.destroy(); resolve(alive) }
+    probe.once('connect', () => done(true))
+    probe.once('error', () => done(false))
+  })
+}
+
+async function claimSingleGateway(): Promise<void> {
+  mkdirSync(GATEWAY_LOCK_DIR, { recursive: true, mode: 0o700 })
+  try {
+    gatewayLock = await listenOnce(GATEWAY_LOCK_PATH)
+    return
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code !== 'EADDRINUSE') throw err
+  }
+
+  if (await holderAnswers(GATEWAY_LOCK_PATH)) {
+    process.stderr.write(
+      `discord channel: another gateway is already running on this bot token\n` +
+      `  refusing to start a second one — it would receive every event twice\n` +
+      `  and post as the same account\n` +
+      `  give this instance its own bot token, or stop the running gateway\n`,
+    )
+    process.exit(1)
+  }
+
+  unlinkSync(GATEWAY_LOCK_PATH)
+  gatewayLock = await listenOnce(GATEWAY_LOCK_PATH)
+}
 
 // Last-resort safety net — without these the process dies silently on any
 // unhandled promise rejection. With them it logs and keeps serving tools.
@@ -1300,7 +1358,8 @@ function runTranscriber(paths: string[]): Promise<string> {
       if (out.length < MAX_TRANSCRIPT_CHARS * 4) out += d.toString()
     })
     child.stderr?.on('data', (d: Buffer) => {
-      if (err.length < 4096) err += d.toString()
+      // Keeps the tail: a Python traceback names its exception on the last line.
+      err = (err + d.toString()).slice(-4096)
     })
     child.on('error', e => {
       clearTimeout(timer)
@@ -1468,8 +1527,11 @@ async function transcribeAttachment(att: Attachment): Promise<Transcription | un
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
     process.stderr.write(`discord channel: transcription of ${safeAttName(att)} failed: ${reason}\n`)
-    // A Python traceback arrives as many lines; the meta value takes one.
-    return { failure: reason.replace(/\s+/g, ' ').trim().slice(0, 200) || 'unknown error' }
+    // A Python traceback arrives as many lines and names its exception on the
+    // last one; the meta value takes one line.
+    const lines = reason.split('\n').map(l => l.trim()).filter(Boolean)
+    const summary = lines[lines.length - 1] ?? ''
+    return { failure: summary.replace(/\s+/g, ' ').slice(0, 200) || 'unknown error' }
   } finally {
     if (path) {
       try {
@@ -3155,7 +3217,15 @@ async function replyContextFor(msg: Message): Promise<{ text: string; meta: Reco
 async function handleInbound(msg: Message): Promise<void> {
   const result = await gate(msg)
 
-  if (result.action === 'drop') return
+  if (result.action === 'drop') {
+    // A refused DM is otherwise indistinguishable from the bridge being down.
+    if (msg.channel.type === ChannelType.DM) {
+      process.stderr.write(
+        `discord channel: dropped a DM from ${msg.author.id} (${msg.author.username}) — not permitted by dmPolicy "${loadAccess().dmPolicy}"\n`,
+      )
+    }
+    return
+  }
 
   if (result.action === 'pair') {
     const lead = result.isResend ? 'Still pending' : 'Pairing required'
@@ -3700,7 +3770,9 @@ client.on('shardResume', () => {
 
 setInterval(writeGatewayState, 20_000).unref?.()
 
-client.login(TOKEN).catch(err => {
-  process.stderr.write(`discord channel: login failed: ${err}\n`)
-  process.exit(1)
-})
+claimSingleGateway()
+  .then(() => client.login(TOKEN))
+  .catch(err => {
+    process.stderr.write(`discord channel: login failed: ${err}\n`)
+    process.exit(1)
+  })

@@ -130,6 +130,13 @@ returned. `limit` goes to 1000, and `before` continues from an earlier call.
 `FR-126`) and nowhere else in the payload, so without it the id that closes a
 report cannot be read from the message at all.
 
+**One gateway per token.** Startup claims a listening socket named from a hash
+of the bot token, and refuses to start when another live process answers on it.
+Two gateways on one token receive every event twice and post as the same
+account. The kernel releases the claim when the holder dies, and a socket left
+by a crash is told from a live holder by connecting to it, so there is no pid to
+go stale and no state to clear by hand.
+
 **Gateway state file.** A live socket is not a live gateway: the connection can
 stay open while nothing is delivered, which looks exactly like a quiet channel.
 The server writes `gateway.state` next to `access.json` every 20 seconds with the
@@ -225,8 +232,12 @@ deliver from, so with a `defaultPolicy` set, `fetch_messages` and
 
 **Open DMs, with a trace.** `dmPolicy` takes a fourth value, `guild`, which
 accepts a DM from anyone sharing a guild with the bot and drops the rest. A
-stranger's DM is otherwise dropped in silence, so a user who sends a config or an
-ID to the bot gets nothing back and nobody learns they tried.
+stranger's DM is otherwise dropped without a reply, so a user who sends a config
+or an ID to the bot gets nothing back.
+
+A refused DM is written to stderr with the sender's id and the policy that
+refused it. The sender still gets no reply; the operator can tell a refusal from
+a bridge that is down.
 
 `dmMirrorChannelId` copies every accepted DM to a channel, since a DM is
 otherwise visible to nobody but the bot:

@@ -203,4 +203,17 @@ Modifications by IbbyLabs, per Apache-2.0 section 4(b):
     inbound traffic for fifteen minutes. A disconnected socket makes send throw,
     which is loud; a socket that is up and has heard nothing sends without error.
 
+  - A gateway refuses to start when another live process already holds the same
+    bot token. Two on one token receive every event twice and post as the same
+    account. The claim is a listening socket named from a hash of the token, so
+    the kernel releases it when the holder dies and a leftover file is told from
+    a live holder by connecting to it rather than by trusting a recorded pid.
+  - A failed transcription reports the last line of the helper's error rather
+    than the first, and its stderr is kept from the tail. A Python traceback
+    names its exception last, so a head-truncated copy carries the frames and
+    never the reason.
+  - A DM refused by dmPolicy is written to stderr with the sender's id. The
+    refusal is otherwise a bare return, indistinguishable from the bridge being
+    down, for both the sender and the session.
+
 Upstream carries no NOTICE file; this one exists to record the above.
